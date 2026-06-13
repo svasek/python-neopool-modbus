@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neopool-modbus"
-version = "2.0.1"
+version = "2.1.0"
 description = "Async Python client for Sugar Valley NeoPool / VistaPool / Hidrolife Modbus pool controllers"
 readme = "README.md"
 license = "Apache-2.0"

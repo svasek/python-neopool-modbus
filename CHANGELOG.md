@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0](https://github.com/svasek/python-neopool-modbus/compare/v2.0.1...v2.1.0) (2026-06-13)
+
+
+### ✨ Features
+
+* **client:** ✨ add public async_read_register API ([#13](https://github.com/svasek/python-neopool-modbus/issues/13)) ([1dc6af1](https://github.com/svasek/python-neopool-modbus/commit/1dc6af10cc64cdb804d03886fd455fc896c0c959))
+* **registers:** ✨ expand COMMAND_REGISTERS with 4 auto-clearing commands ([#12](https://github.com/svasek/python-neopool-modbus/issues/12)) ([a95de93](https://github.com/svasek/python-neopool-modbus/commit/a95de934754a32a84200e514cb5293d67b8b2580))
+
 ## [2.0.1](https://github.com/svasek/python-neopool-modbus/compare/v2.0.0...v2.0.1) (2026-06-10)
 
 
