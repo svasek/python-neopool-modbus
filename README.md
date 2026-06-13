@@ -77,6 +77,32 @@ asyncio.run(main())
 The client is lazy — it opens the TCP connection on first use and reuses it
 across calls; `close()` releases the socket and resets retry/backoff state.
 
+### Reading individual registers
+
+For one-off reads by address, `async_read_register(address, count=1)` picks
+the correct Modbus function code automatically: **Read Input Registers**
+(FC 0x04) for any address on the 0x01 page (MEASURE) and **Read Holding
+Registers** (FC 0x03) elsewhere.
+
+```python
+from neopool_modbus import NeoPoolModbusClient
+
+client = NeoPoolModbusClient({"host": "192.168.1.42"})
+
+# Single register — pH level (raw u16, divide by 100 for pH 7.20)
+ph_raw = (await client.async_read_register(0x0102))[0]
+
+# Multi-register read (1-31; the firmware refuses larger requests).
+# Combine the two halves of a 32-bit cell-runtime counter:
+low, high = await client.async_read_register(0x0208, count=2)
+partial_seconds = (high << 16) | low
+```
+
+The method validates the request before touching the wire and raises
+`ValueError` for out-of-range addresses, counts that exceed
+`MAX_REGISTERS_PER_READ` (31), or ranges that would either cross the
+input/holding namespace boundary or extend past the 16-bit address space.
+
 ## Public API
 
 ```python
@@ -89,13 +115,22 @@ from neopool_modbus import (
     async_probe_serial,
 )
 from neopool_modbus.registers import (
+    CLEAR_EEPROM_REGISTER,
+    COMMAND_REGISTERS,
+    COPY_TO_RTC_REGISTER,
     DEFAULT_MODBUS_FRAMER,
-    EXEC_REGISTER,
     EEPROM_SAVE_REGISTER,
+    ESCAPE_REGISTER,
+    EXEC_REGISTER,
     HEATING_SETPOINT_REGISTER,
+    INPUT_REGISTER_RANGES,
     INTELLIGENT_SETPOINT_REGISTER,
     MANUAL_FILTRATION_REGISTER,
+    MAX_REGISTERS_PER_READ,
+    RESET_USER_COUNTERS_REGISTER,
+    STOP_ALL_MODULES_REGISTER,
     TIMER_BLOCKS,
+    is_input_register,
     is_valid_relay_gpio,
 )
 from neopool_modbus.decoders import (
@@ -153,8 +188,11 @@ out-of-range AUX relay index — those are not transport failures.
 - Async I/O on top of `pymodbus.AsyncModbusTcpClient`
 - Batched register reads — one round-trip per protocol page, with
   notification-bit-driven cache invalidation so unchanged pages skip the read
+- Public read-by-address API (`async_read_register`) that automatically
+  picks Read Input vs Read Holding based on the address
 - Exponential connection retry with bounded backoff
-- Write-and-verify cycle for configuration registers
+- Write-and-verify cycle for configuration registers, with auto-clearing
+  command registers (`COMMAND_REGISTERS`) excluded from verification
 - Capability detection (hydrolysis, pH, Redox, chlorine, conductivity, ION)
 - Strict type hints (`py.typed`), 100 % unit-test coverage
 
