@@ -2781,8 +2781,31 @@ async def test_async_read_register_crosses_boundary(config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("address", "count"),
+    [
+        # Smallest overflow: end = 0x10000
+        (0xFFFF, 2),
+        # Both halves outside the input page; without the overflow guard the
+        # XOR boundary check would let this pass (False != False is False)
+        # and the bad request would hit the wire.
+        (0xFFFE, 10),
+        # Largest valid count combined with a high address
+        (0xFFE6, 31),
+    ],
+)
+async def test_async_read_register_overflow_past_16_bit_space(
+    config, address: int, count: int
+):
+    """``address + count - 1 > 0xFFFF`` raises before any boundary check."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    with pytest.raises(ValueError, match="extends past the 16-bit"):
+        await client.async_read_register(address, count=count)
+
+
+@pytest.mark.asyncio
 async def test_async_read_register_connection_error_propagates(config, monkeypatch):
-    """If the client isn't connected, NeoPoolConnectionError surfaces."""
+    """If the client isn't connected, NeoPoolConnectionError surfaces and bumps diagnostics."""
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
     fake_modbus.connected = False
@@ -2790,6 +2813,13 @@ async def test_async_read_register_connection_error_propagates(config, monkeypat
 
     with pytest.raises(NeoPoolConnectionError):
         await client.async_read_register(0x0500)
+    # Each disconnected read increments the diagnostic counter so users see
+    # connection drops in `_failed_reads`, not just the raised exception.
+    assert client._failed_reads.get("connection") == 1
+
+    with pytest.raises(NeoPoolConnectionError):
+        await client.async_read_register(0x0500)
+    assert client._failed_reads.get("connection") == 2
 
 
 @pytest.mark.asyncio
