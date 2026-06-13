@@ -901,13 +901,13 @@ async def test_perform_write_register_mismatch_warning(config, monkeypatch, capl
 @pytest.mark.parametrize(
     "register_name",
     [
-        "EEPROM_SAVE_REGISTER",
         "CLEAR_EEPROM_REGISTER",
+        "COPY_TO_RTC_REGISTER",
+        "EEPROM_SAVE_REGISTER",
+        "ESCAPE_REGISTER",
+        "EXEC_REGISTER",
         "RESET_USER_COUNTERS_REGISTER",
         "STOP_ALL_MODULES_REGISTER",
-        "EXEC_REGISTER",
-        "ESCAPE_REGISTER",
-        "COPY_TO_RTC_REGISTER",
     ],
 )
 async def test_perform_write_command_register_no_mismatch_warning(
