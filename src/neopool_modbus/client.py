@@ -439,7 +439,13 @@ class NeoPoolModbusClient:
         if not 1 <= count <= MAX_REGISTERS_PER_READ:
             raise ValueError(f"count must be 1-{MAX_REGISTERS_PER_READ}, got {count}")
         end = address + count - 1
-        if is_input_register(address) != is_input_register(end):
+        if end > 0xFFFF:
+            raise ValueError(
+                f"read range 0x{address:04X}+{count} extends past the 16-bit "
+                f"Modbus address space (end=0x{end:X})"
+            )
+        is_input = is_input_register(address)
+        if is_input != is_input_register(end):
             raise ValueError(
                 f"read range 0x{address:04X}-0x{end:04X} crosses the "
                 "input/holding register boundary; split into two calls"
@@ -447,13 +453,14 @@ class NeoPoolModbusClient:
 
         client = await self.get_client()
         if client is None or not client.connected:
+            self._failed_reads["connection"] = (
+                self._failed_reads.get("connection", 0) + 1
+            )
             raise NeoPoolConnectionError(
                 f"Modbus client connection failed to {self._host}:{self._port}"
             )
         read_func = (
-            client.read_input_registers
-            if is_input_register(address)
-            else client.read_holding_registers
+            client.read_input_registers if is_input else client.read_holding_registers
         )
         # Reuse _read_register_ranges for the timeout / Modbus-error →
         # NeoPool*Error translation, _failed_reads bookkeeping, and the
