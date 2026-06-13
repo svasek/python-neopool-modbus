@@ -40,3 +40,4 @@ junit.xml
 tmp/
 temp/
 *.log
+uv.lock

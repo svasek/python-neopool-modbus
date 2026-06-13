@@ -900,12 +900,27 @@ async def test_perform_write_register_mismatch_warning(config, monkeypatch, capl
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "register_name",
-    ["EEPROM_SAVE_REGISTER", "EXEC_REGISTER", "COPY_TO_RTC_REGISTER"],
+    [
+        "CLEAR_EEPROM_REGISTER",
+        "COPY_TO_RTC_REGISTER",
+        "EEPROM_SAVE_REGISTER",
+        "ESCAPE_REGISTER",
+        "EXEC_REGISTER",
+        "RESET_USER_COUNTERS_REGISTER",
+        "STOP_ALL_MODULES_REGISTER",
+    ],
 )
 async def test_perform_write_command_register_no_mismatch_warning(
     config, monkeypatch, caplog, register_name
 ):
-    """Command registers (e.g. EXEC, EEPROM_SAVE, COPY_TO_RTC) auto-clear; no mismatch warning expected."""
+    """Command registers auto-clear after write; no mismatch warning expected.
+
+    Each one fires a one-shot device action and the firmware then resets the
+    register to 0, so a verify-after-write would always read 0 and falsely
+    flag a mismatch. The set is canonical — adding a register here is how
+    new buttons (reset counters, stop-all, escape, etc.) avoid spurious
+    warnings in the integration log.
+    """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
