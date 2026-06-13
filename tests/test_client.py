@@ -2647,3 +2647,210 @@ async def test_hydrolysis_detected_via_status_ctrl_active(config, monkeypatch):
     result = await client._perform_read_all()
 
     assert result["Hydrolysis module detected"] is True
+
+
+# -----------------------------------------------------------------------------
+# async_read_register — public read API
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_holding(config, monkeypatch):
+    """Holding-register read: USER page (0x0500) hits FC 0x03."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs):
+            self.isError = lambda: False
+            self.registers = regs
+
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp([42]))
+    fake_modbus.read_input_registers = AsyncMock(
+        side_effect=AssertionError("must not be called for holding-register address")
+    )
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client.async_read_register(0x0500)
+    assert result == [42]
+    fake_modbus.read_holding_registers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_input(config, monkeypatch):
+    """Input-register read: MEASURE address (0x0102) hits FC 0x04."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs):
+            self.isError = lambda: False
+            self.registers = regs
+
+    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([720]))
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=AssertionError("must not be called for input-register address")
+    )
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client.async_read_register(0x0102)
+    assert result == [720]
+    fake_modbus.read_input_registers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_input_undocumented_addr(config, monkeypatch):
+    """Page rule applies to undocumented addresses (e.g. 0x01A0) too."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs):
+            self.isError = lambda: False
+            self.registers = regs
+
+    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0]))
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=AssertionError("must not be called — page 0x01 = input registers")
+    )
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    # 0x01A0 is on the input-register page even though no register is documented at it
+    result = await client.async_read_register(0x01A0)
+    assert result == [0]
+    fake_modbus.read_input_registers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_count_default_one(config, monkeypatch):
+    """Omitting `count` reads one register."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs):
+            self.isError = lambda: False
+            self.registers = regs
+
+    captured: dict = {}
+
+    async def _read(address, count, device_id):
+        captured["count"] = count
+        return DummyResp([0] * count)
+
+    fake_modbus.read_holding_registers = AsyncMock(side_effect=_read)
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    await client.async_read_register(0x0500)
+    assert captured["count"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [1, 16, 31])
+async def test_async_read_register_max_31_ok(config, monkeypatch, count):
+    """count=1..31 are accepted."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs):
+            self.isError = lambda: False
+            self.registers = regs
+
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp([0] * count))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client.async_read_register(0x0500, count=count)
+    assert len(result) == count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [0, -1, 32, 100, 9999])
+async def test_async_read_register_count_out_of_range(config, count):
+    """count=0, negative, or >31 raises ValueError without touching the wire."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    with pytest.raises(ValueError, match="count must be 1-31"):
+        await client.async_read_register(0x0500, count=count)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("address", [-1, 0x10000, 0xFFFFFF])
+async def test_async_read_register_address_out_of_range(config, address):
+    """address outside 0x0000-0xFFFF raises ValueError."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    with pytest.raises(ValueError, match="address must be 0x0000-0xFFFF"):
+        await client.async_read_register(address)
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_crosses_boundary(config):
+    """0x01F0 + 20 registers crosses the input/holding boundary at 0x01FF."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    with pytest.raises(ValueError, match="crosses the input/holding"):
+        await client.async_read_register(0x01F0, count=20)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("address", "count"),
+    [
+        # Smallest overflow: end = 0x10000
+        (0xFFFF, 2),
+        # Both halves outside the input page; without the overflow guard the
+        # XOR boundary check would let this pass (False != False is False)
+        # and the bad request would hit the wire.
+        (0xFFFE, 10),
+        # Largest valid count combined with a high address
+        (0xFFE6, 31),
+    ],
+)
+async def test_async_read_register_overflow_past_16_bit_space(
+    config, address: int, count: int
+):
+    """``address + count - 1 > 0xFFFF`` raises before any boundary check."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    with pytest.raises(ValueError, match="extends past the 16-bit"):
+        await client.async_read_register(address, count=count)
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_connection_error_propagates(config, monkeypatch):
+    """If the client isn't connected, NeoPoolConnectionError surfaces and bumps diagnostics."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = False
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    with pytest.raises(NeoPoolConnectionError):
+        await client.async_read_register(0x0500)
+    # Each disconnected read increments the diagnostic counter so users see
+    # connection drops in `_failed_reads`, not just the raised exception.
+    assert client._failed_reads.get("connection") == 1
+
+    with pytest.raises(NeoPoolConnectionError):
+        await client.async_read_register(0x0500)
+    assert client._failed_reads.get("connection") == 2
+
+
+@pytest.mark.asyncio
+async def test_async_read_register_modbus_error_propagates(config, monkeypatch):
+    """Device returning isError=True triggers NeoPoolModbusError via _read_register_ranges."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self):
+            self.isError = lambda: True
+            self.registers = []
+
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp())
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    with pytest.raises(NeoPoolModbusError):
+        await client.async_read_register(0x0500)

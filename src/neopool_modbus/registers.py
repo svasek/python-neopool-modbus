@@ -56,6 +56,25 @@ INTELLIGENT_SETPOINT_REGISTER = 0x041C  # MBF_PAR_INTELLIGENT_TEMP
 # MBF_RELAY_STATE has 7 relays (bits 0-6); MBF_PAR_*_RELAY_GPIO is 1-based.
 MAX_RELAY_GPIO = 7
 
+# NeoPool firmware refuses Modbus read requests larger than this many
+# registers per request. The library batches its own internal reads to
+# stay below the limit; the public read API enforces it on the caller.
+MAX_REGISTERS_PER_READ = 31
+
+# Modbus function-code classifier. The 0x01 page (MEASURE) is exposed as
+# input registers (FC 0x04, "Read Input Registers"); every other page
+# uses holding registers (FC 0x03, "Read Holding Registers"). The page
+# prefix is what selects the namespace — the entire 0x01XX range is
+# input-registers, not just the documented 0x0100-0x011F MEASURE block.
+# Mismatching the function code reads a different namespace and returns
+# either an exception or — worse — a plausible-looking wrong value.
+INPUT_REGISTER_RANGES: tuple[tuple[int, int], ...] = ((0x0100, 0x01FF),)
+
+
+def is_input_register(address: int) -> bool:
+    """Return True if `address` is read with FC 0x04 (input registers)."""
+    return any(lo <= address <= hi for lo, hi in INPUT_REGISTER_RANGES)
+
 
 def is_valid_relay_gpio(gpio: int) -> bool:
     """Return True if the relay GPIO number is within the hardware range (1-based, 1-7)."""
@@ -88,11 +107,14 @@ __all__ = [
     "ESCAPE_REGISTER",
     "EXEC_REGISTER",
     "HEATING_SETPOINT_REGISTER",
+    "INPUT_REGISTER_RANGES",
     "INTELLIGENT_SETPOINT_REGISTER",
     "MANUAL_FILTRATION_REGISTER",
+    "MAX_REGISTERS_PER_READ",
     "MAX_RELAY_GPIO",
     "RESET_USER_COUNTERS_REGISTER",
     "STOP_ALL_MODULES_REGISTER",
     "TIMER_BLOCKS",
+    "is_input_register",
     "is_valid_relay_gpio",
 ]

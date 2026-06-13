@@ -42,7 +42,9 @@ from .registers import (
     DEFAULT_MODBUS_FRAMER,
     EEPROM_SAVE_REGISTER,
     EXEC_REGISTER,
+    MAX_REGISTERS_PER_READ,
     TIMER_BLOCKS,
+    is_input_register,
     is_valid_relay_gpio,
 )
 from .status_mask import (
@@ -402,6 +404,73 @@ class NeoPoolModbusClient:
             self._last_notification = 0
             self._last_was_full_read = True
             self._cached_timers = {}
+
+    async def async_read_register(
+        self,
+        address: int,
+        count: int = 1,
+    ) -> list[int]:
+        """Read ``count`` registers starting at ``address``.
+
+        Picks Read Input Registers (FC 0x04) for any address on the 0x01
+        page (0x0100-0x01FF) and Read Holding Registers (FC 0x03)
+        elsewhere — see :func:`neopool_modbus.registers.is_input_register`.
+        The NeoPool firmware refuses requests larger than
+        ``MAX_REGISTERS_PER_READ`` (31) registers; ask for fewer or split
+        into multiple calls.
+
+        Args:
+            address: 16-bit register address (0x0000-0xFFFF).
+            count: Number of consecutive registers to read (1-31).
+
+        Returns:
+            Raw u16 register values as a list of length ``count``.
+
+        Raises:
+            ValueError: ``address`` out of range, ``count`` out of range,
+                or the (address, count) pair would cross the holding /
+                input-register namespace boundary.
+            NeoPoolConnectionError: TCP connection failed.
+            NeoPoolTimeoutError: Read timed out.
+            NeoPoolModbusError: Device returned a Modbus exception response.
+        """
+        if not 0 <= address <= 0xFFFF:
+            raise ValueError(f"address must be 0x0000-0xFFFF, got 0x{address:04X}")
+        if not 1 <= count <= MAX_REGISTERS_PER_READ:
+            raise ValueError(f"count must be 1-{MAX_REGISTERS_PER_READ}, got {count}")
+        end = address + count - 1
+        if end > 0xFFFF:
+            raise ValueError(
+                f"read range 0x{address:04X}+{count} extends past the 16-bit "
+                f"Modbus address space (end=0x{end:X})"
+            )
+        is_input = is_input_register(address)
+        if is_input != is_input_register(end):
+            raise ValueError(
+                f"read range 0x{address:04X}-0x{end:04X} crosses the "
+                "input/holding register boundary; split into two calls"
+            )
+
+        client = await self.get_client()
+        if client is None or not client.connected:
+            self._failed_reads["connection"] = (
+                self._failed_reads.get("connection", 0) + 1
+            )
+            raise NeoPoolConnectionError(
+                f"Modbus client connection failed to {self._host}:{self._port}"
+            )
+        read_func = (
+            client.read_input_registers if is_input else client.read_holding_registers
+        )
+        # Reuse _read_register_ranges for the timeout / Modbus-error →
+        # NeoPool*Error translation, _failed_reads bookkeeping, and the
+        # 50ms inter-request sleep that the rest of the library applies.
+        return await self._read_register_ranges(
+            client,
+            [(address, count)],
+            read_func=read_func,
+            label=f"async_read_register(0x{address:04X})",
+        )
 
     async def async_read_all(self) -> dict[str, Any]:
         """Read all data with retry logic."""

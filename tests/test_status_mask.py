@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from neopool_modbus.registers import is_valid_relay_gpio
+import pytest
+
+from neopool_modbus.registers import is_input_register, is_valid_relay_gpio
 from neopool_modbus.status_mask import (
     decode_hidro_status_bits,
     decode_ion_status_bits,
@@ -129,6 +131,27 @@ def test_is_valid_relay_gpio_valid():
 def test_is_valid_relay_gpio_invalid():
     for gpio in (0, -1, 8, 16, 255):
         assert is_valid_relay_gpio(gpio) is False
+
+
+# --- is_input_register tests ---
+
+
+@pytest.mark.parametrize(
+    "address",
+    [0x0100, 0x011F, 0x0150, 0x01A0, 0x01FF],
+)
+def test_is_input_register_inside_page(address: int) -> None:
+    """Every address on the 0x01 page is an input register."""
+    assert is_input_register(address) is True
+
+
+@pytest.mark.parametrize(
+    "address",
+    [0x0000, 0x00FF, 0x0200, 0x0300, 0x0500, 0xFFFF],
+)
+def test_is_input_register_outside_page(address: int) -> None:
+    """Anything off the 0x01 page is NOT an input register."""
+    assert is_input_register(address) is False
 
 
 # --- decode_uv_lamp_state tests ---
