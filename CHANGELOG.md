@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1](https://github.com/svasek/python-neopool-modbus/compare/v2.1.0...v2.1.1) (2026-06-14)
+
+
+### 🐛 Bug Fixes
+
+* 🩹 relax pymodbus upper bound for HA core hassfest ([c9d9133](https://github.com/svasek/python-neopool-modbus/commit/c9d9133d3d4cb057a14e3513f9c6b91688c3a557))
+
 ## [2.1.0](https://github.com/svasek/python-neopool-modbus/compare/v2.0.1...v2.1.0) (2026-06-13)
 
 
