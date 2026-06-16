@@ -60,6 +60,104 @@ def decode_par_model_modules(bitmask: int | None) -> list[str]:
     return [name for mask, name in _PAR_MODEL_MODULES if bitmask & mask]
 
 
+# MBF_PAR_FILT_MODE values (wire protocol).
+_FILTRATION_MODES: dict[int, str] = {
+    0: "manual",
+    1: "auto",
+    2: "heating",
+    3: "smart",
+    4: "intelligent",
+    13: "backwash",
+}
+_FILTRATION_MODE_VALUES: dict[str, int] = {v: k for k, v in _FILTRATION_MODES.items()}
+
+
+def decode_filtration_mode(reg_val: int | None) -> str | None:
+    """Return the filtration-mode name for *reg_val*, or ``None`` if unknown."""
+    if reg_val is None:
+        return None
+    return _FILTRATION_MODES.get(int(reg_val))
+
+
+def encode_filtration_mode(name: str) -> int:
+    """Return the wire value for a filtration-mode *name*.
+
+    Raises :class:`ValueError` if *name* is not one of the known modes.
+    """
+    try:
+        return _FILTRATION_MODE_VALUES[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown filtration mode {name!r}; "
+            f"expected one of {sorted(_FILTRATION_MODE_VALUES)}"
+        ) from None
+
+
+# MBF_CELL_BOOST composite register bits.
+_MBMSK_CELL_BOOST_ACTIVE = 0x05A0  # boost active pattern
+_MBMSK_CELL_BOOST_NO_REDOX = 0x8000  # disables redox-driven dosing while active
+
+_CELL_BOOST_MODES: tuple[str, ...] = ("inactive", "active", "active_with_redox")
+
+
+def decode_cell_boost(reg_val: int | None) -> str | None:
+    """Return the cell-boost mode for *reg_val*, or ``None`` if unrecognised."""
+    if reg_val is None:
+        return None
+    val = int(reg_val)
+    if val == 0:
+        return "inactive"
+    if val & _MBMSK_CELL_BOOST_NO_REDOX:
+        return "active"
+    if (val & _MBMSK_CELL_BOOST_ACTIVE) == _MBMSK_CELL_BOOST_ACTIVE:
+        return "active_with_redox"
+    return None
+
+
+def encode_cell_boost(name: str) -> int:
+    """Return the wire value for a cell-boost *name*.
+
+    Raises :class:`ValueError` if *name* is not one of ``inactive``,
+    ``active`` or ``active_with_redox``.
+    """
+    if name == "inactive":
+        return 0
+    if name == "active":
+        return _MBMSK_CELL_BOOST_ACTIVE | _MBMSK_CELL_BOOST_NO_REDOX
+    if name == "active_with_redox":
+        return _MBMSK_CELL_BOOST_ACTIVE
+    raise ValueError(
+        f"unknown cell-boost mode {name!r}; expected one of {list(_CELL_BOOST_MODES)}"
+    )
+
+
+# Filtration-speed indices map to the values returned by get_filtration_speed.
+_FILTRATION_SPEEDS: dict[int, str] = {0: "off", 1: "low", 2: "mid", 3: "high"}
+_FILTRATION_SPEED_VALUES: dict[str, int] = {v: k for k, v in _FILTRATION_SPEEDS.items()}
+
+
+def decode_filtration_speed(idx: int | None) -> str | None:
+    """Return the filtration-speed name for *idx*, or ``None`` if unknown."""
+    if idx is None:
+        return None
+    return _FILTRATION_SPEEDS.get(int(idx))
+
+
+def encode_filtration_speed(name: str) -> int:
+    """Return the speed index for *name*.
+
+    Raises :class:`ValueError` if *name* is not one of ``off``, ``low``,
+    ``mid`` or ``high``.
+    """
+    try:
+        return _FILTRATION_SPEED_VALUES[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown filtration speed {name!r}; "
+            f"expected one of {sorted(_FILTRATION_SPEED_VALUES)}"
+        ) from None
+
+
 def modbus_regs_to_ascii(regs: list[int]) -> str:
     """Convert list of uint16 Modbus registers to ASCII string (ASCIIZ, max 10 chars)."""
     chars: list[str] = []
@@ -295,7 +393,13 @@ def is_hydrolysis_in_percent(data: dict[str, Any]) -> bool:
 __all__ = [
     "build_timer_block",
     "combine_u32",
+    "decode_cell_boost",
+    "decode_filtration_mode",
+    "decode_filtration_speed",
     "decode_par_model_modules",
+    "encode_cell_boost",
+    "encode_filtration_mode",
+    "encode_filtration_speed",
     "generate_time_options",
     "get_filtration_pump_type",
     "get_filtration_speed",

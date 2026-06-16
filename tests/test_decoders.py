@@ -18,7 +18,13 @@ import pytest
 from neopool_modbus.decoders import (
     build_timer_block,
     combine_u32,
+    decode_cell_boost,
+    decode_filtration_mode,
+    decode_filtration_speed,
     decode_par_model_modules,
+    encode_cell_boost,
+    encode_filtration_mode,
+    encode_filtration_speed,
     generate_time_options,
     get_filtration_pump_type,
     get_filtration_speed,
@@ -527,3 +533,126 @@ def test_combine_u32_missing_or_none_returns_none(low, high):
 )
 def test_decode_par_model_modules(bitmask, expected):
     assert decode_par_model_modules(bitmask) == expected
+
+
+# ---------------------------------------------------------------------------
+# filtration_mode codec
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reg_val", "expected"),
+    [
+        (0, "manual"),
+        (1, "auto"),
+        (2, "heating"),
+        (3, "smart"),
+        (4, "intelligent"),
+        (13, "backwash"),
+        (None, None),
+        (5, None),
+        (99, None),
+    ],
+)
+def test_decode_filtration_mode(reg_val, expected):
+    assert decode_filtration_mode(reg_val) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("manual", 0),
+        ("auto", 1),
+        ("heating", 2),
+        ("smart", 3),
+        ("intelligent", 4),
+        ("backwash", 13),
+    ],
+)
+def test_encode_filtration_mode(name, expected):
+    assert encode_filtration_mode(name) == expected
+
+
+def test_encode_filtration_mode_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown filtration mode"):
+        encode_filtration_mode("nonsense")
+
+
+# ---------------------------------------------------------------------------
+# cell_boost codec
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reg_val", "expected"),
+    [
+        (0x0000, "inactive"),
+        (0x85A0, "active"),
+        (0x05A0, "active_with_redox"),
+        # any value with bit 0x8000 set decodes as "active" (no-redox variant)
+        (0x8000, "active"),
+        (0x8001, "active"),
+        # missing input returns None
+        (None, None),
+        # unrecognised non-zero pattern returns None
+        (0x0100, None),
+    ],
+)
+def test_decode_cell_boost(reg_val, expected):
+    assert decode_cell_boost(reg_val) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("inactive", 0),
+        ("active", 0x85A0),
+        ("active_with_redox", 0x05A0),
+    ],
+)
+def test_encode_cell_boost(name, expected):
+    assert encode_cell_boost(name) == expected
+
+
+def test_encode_cell_boost_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown cell-boost mode"):
+        encode_cell_boost("foo")
+
+
+def test_cell_boost_round_trip():
+    """encode -> decode round trips for every public mode."""
+    for name in ("inactive", "active", "active_with_redox"):
+        assert decode_cell_boost(encode_cell_boost(name)) == name
+
+
+# ---------------------------------------------------------------------------
+# filtration_speed codec
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("idx", "expected"),
+    [
+        (0, "off"),
+        (1, "low"),
+        (2, "mid"),
+        (3, "high"),
+        (None, None),
+        (4, None),
+    ],
+)
+def test_decode_filtration_speed(idx, expected):
+    assert decode_filtration_speed(idx) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("off", 0), ("low", 1), ("mid", 2), ("high", 3)],
+)
+def test_encode_filtration_speed(name, expected):
+    assert encode_filtration_speed(name) == expected
+
+
+def test_encode_filtration_speed_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown filtration speed"):
+        encode_filtration_speed("turbo")
