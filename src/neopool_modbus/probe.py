@@ -58,7 +58,8 @@ async def async_probe_serial(
     host: str,
     *,
     port: int = 502,
-    slave_id: int = 1,
+    unit_id: int | None = None,
+    slave_id: int | None = None,
     framer: str = "tcp",
     timeout: float = 5.0,
 ) -> str:
@@ -74,7 +75,12 @@ async def async_probe_serial(
     Args:
         host: Hostname or IP of the Modbus TCP gateway.
         port: TCP port (default ``502``).
-        slave_id: Modbus unit / slave id (default ``1``).
+        unit_id: Modbus unit (server) ID (default ``1``). Identifies the
+            device on the bus per Modbus TCP/IP spec V1.1b3 ("Unit
+            Identifier"). The new client/server naming replaces the
+            legacy master/slave terminology.
+        slave_id: Deprecated alias for ``unit_id`` kept for backwards
+            compatibility. Ignored when ``unit_id`` is set.
         framer: ``"tcp"`` (Modbus TCP / MBAP, default) or ``"rtu"``
             (RTU-over-TCP for gateways like Elfin EW11).
         timeout: Per-call timeout in seconds for both the connect and the
@@ -95,6 +101,8 @@ async def async_probe_serial(
             ``__cause__``.
     """
     framer_type = _resolve_framer(framer)
+    if unit_id is None:
+        unit_id = slave_id if slave_id is not None else 1
     client = AsyncModbusTcpClient(host, port=port, timeout=timeout, framer=framer_type)
     try:
         try:
@@ -120,7 +128,7 @@ async def async_probe_serial(
                 client.read_holding_registers(
                     address=_SERIAL_REGISTER,
                     count=_SERIAL_COUNT,
-                    device_id=slave_id,
+                    device_id=unit_id,
                 ),
                 timeout=timeout,
             )

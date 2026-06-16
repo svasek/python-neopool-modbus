@@ -57,7 +57,7 @@ from neopool_modbus import NeoPoolModbusClient
 
 async def main() -> None:
     client = NeoPoolModbusClient(
-        {"host": "192.168.1.42", "port": 502, "slave_id": 1}
+        {"host": "192.168.1.42", "port": 502, "unit_id": 1}
     )
     try:
         data = await client.async_read_all()
