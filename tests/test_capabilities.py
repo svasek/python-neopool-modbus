@@ -15,6 +15,9 @@
 import pytest
 
 from neopool_modbus.capabilities import (
+    has_filtvalve,
+    has_heating_relay,
+    has_variable_speed_pump,
     is_chlorine_module_present,
     is_conductivity_module_present,
     is_hydrolysis_present,
@@ -22,6 +25,7 @@ from neopool_modbus.capabilities import (
     is_ph_module_present,
     is_redox_module_present,
     is_salinity_module_present,
+    is_temperature_active,
     is_uv_lamp_present,
 )
 
@@ -62,3 +66,67 @@ def test_factory_bitmask_predicates(predicate, bit):
     # Missing or None register defaults to absent.
     assert predicate({}) is False
     assert predicate({"MBF_PAR_MODEL": None}) is False
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"MBF_PAR_TEMPERATURE_ACTIVE": 1}, True),
+        ({"MBF_PAR_TEMPERATURE_ACTIVE": 0}, False),
+        ({"MBF_PAR_TEMPERATURE_ACTIVE": None}, False),
+        ({}, False),
+    ],
+)
+def test_is_temperature_active(data, expected):
+    assert is_temperature_active(data) is expected
+
+
+@pytest.mark.parametrize(
+    ("gpio", "expected"),
+    [
+        (1, True),
+        (7, True),
+        (0, False),
+        (8, False),  # outside valid range
+        (None, False),
+    ],
+)
+def test_has_heating_relay(gpio, expected):
+    """has_heating_relay accepts only valid relay GPIO numbers (1-7)."""
+    data = {} if gpio is None else {"MBF_PAR_HEATING_GPIO": gpio}
+    assert has_heating_relay(data) is expected
+
+
+@pytest.mark.parametrize(
+    ("conf", "expected"),
+    [
+        # MBF_PAR_FILTRATION_CONF lower nibble: 0 = standard pump,
+        # 1/2 = variable-speed pump types
+        (0x0000, False),
+        (0x0001, True),
+        (0x0002, True),
+        # Upper bits (speed selection, etc.) must not affect the predicate.
+        (0x00F0, False),
+        (0x00F1, True),
+        (None, False),
+    ],
+)
+def test_has_variable_speed_pump(conf, expected):
+    data = {} if conf is None else {"MBF_PAR_FILTRATION_CONF": conf}
+    assert has_variable_speed_pump(data) is expected
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"MBF_PAR_FILTVALVE_GPIO": 5}, True),
+        ({"MBF_PAR_FILTVALVE_GPIO": 0, "MBF_PAR_FILTVALVE_ENABLE": 1}, True),
+        ({"MBF_PAR_FILTVALVE_ENABLE": 1}, True),
+        ({"MBF_PAR_FILTVALVE_GPIO": 0, "MBF_PAR_FILTVALVE_ENABLE": 0}, False),
+        # GPIO outside the hardware range and no enable -> not present.
+        ({"MBF_PAR_FILTVALVE_GPIO": 8}, False),
+        ({}, False),
+    ],
+)
+def test_has_filtvalve(data, expected):
+    assert has_filtvalve(data) is expected

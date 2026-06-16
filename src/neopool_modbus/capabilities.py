@@ -25,6 +25,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .decoders import get_filtration_pump_type
+from .registers import is_valid_relay_gpio
+
 _MBMSK_MODEL_ION = 0x0001
 _MBMSK_MODEL_UV = 0x0004
 _MBMSK_MODEL_SALINITY = 0x0008
@@ -70,7 +73,37 @@ def is_salinity_module_present(data: dict[str, Any]) -> bool:
     return bool((data.get("MBF_PAR_MODEL") or 0) & _MBMSK_MODEL_SALINITY)
 
 
+def is_temperature_active(data: dict[str, Any]) -> bool:
+    """True when the controller has the temperature sensor enabled."""
+    return bool(data.get("MBF_PAR_TEMPERATURE_ACTIVE"))
+
+
+def has_heating_relay(data: dict[str, Any]) -> bool:
+    """True when a relay GPIO is assigned to the heating output."""
+    return is_valid_relay_gpio(data.get("MBF_PAR_HEATING_GPIO") or 0)
+
+
+def has_variable_speed_pump(data: dict[str, Any]) -> bool:
+    """True when the configured filtration pump supports variable speeds."""
+    return bool(get_filtration_pump_type(data.get("MBF_PAR_FILTRATION_CONF") or 0))
+
+
+def has_filtvalve(data: dict[str, Any]) -> bool:
+    """True when a Besgo automatic filter valve is configured.
+
+    The primary signal is the relay GPIO assignment (1-7); the legacy
+    ``MBF_PAR_FILTVALVE_ENABLE`` flag is accepted as a fallback when the
+    GPIO register is zero but the feature flag is explicitly set.
+    """
+    gpio = data.get("MBF_PAR_FILTVALVE_GPIO") or 0
+    enable = data.get("MBF_PAR_FILTVALVE_ENABLE") or 0
+    return is_valid_relay_gpio(gpio) or enable != 0
+
+
 __all__ = [
+    "has_filtvalve",
+    "has_heating_relay",
+    "has_variable_speed_pump",
     "is_chlorine_module_present",
     "is_conductivity_module_present",
     "is_hydrolysis_present",
@@ -78,5 +111,6 @@ __all__ = [
     "is_ph_module_present",
     "is_redox_module_present",
     "is_salinity_module_present",
+    "is_temperature_active",
     "is_uv_lamp_present",
 ]
