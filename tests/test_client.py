@@ -2884,3 +2884,68 @@ async def test_async_read_register_modbus_error_propagates(config, monkeypatch):
 
     with pytest.raises(NeoPoolModbusError):
         await client.async_read_register(0x0500)
+
+
+# ---------------------------------------------------------------------------
+# _collapse_u32_register_pairs
+# ---------------------------------------------------------------------------
+
+
+def test_collapse_u32_combines_known_pair():
+    """Each known LOW/HIGH pair is replaced by a single combined entry."""
+    result = {
+        "MBF_PAR_TIME_LOW": 0x5678,
+        "MBF_PAR_TIME_HIGH": 0x1234,
+        "MBF_CELL_RUNTIME_LOW": 100,
+        "MBF_CELL_RUNTIME_HIGH": 0,
+        "MBF_OTHER": 42,
+    }
+    neopool_modbus._collapse_u32_register_pairs(result)
+    assert result["MBF_PAR_TIME"] == 0x12345678
+    assert result["MBF_CELL_RUNTIME"] == 100
+    assert "MBF_PAR_TIME_LOW" not in result
+    assert "MBF_PAR_TIME_HIGH" not in result
+    assert "MBF_CELL_RUNTIME_LOW" not in result
+    assert "MBF_CELL_RUNTIME_HIGH" not in result
+    # Unrelated keys are untouched.
+    assert result["MBF_OTHER"] == 42
+
+
+def test_collapse_u32_skips_pair_with_missing_half():
+    """When one half is missing the combined entry is not emitted."""
+    result = {"MBF_PAR_TIME_LOW": 0x5678}
+    neopool_modbus._collapse_u32_register_pairs(result)
+    # The half we passed in is consumed but no combined entry appears.
+    assert "MBF_PAR_TIME" not in result
+    assert "MBF_PAR_TIME_LOW" not in result
+
+
+def test_collapse_u32_handles_empty_dict():
+    """Calling on an empty dict is a no-op."""
+    result: dict[str, Any] = {}
+    neopool_modbus._collapse_u32_register_pairs(result)
+    assert result == {}
+
+
+def test_collapse_u32_does_not_touch_unrelated_pairs():
+    """Pseudo-pairs like SMART_TEMP_LOW/HIGH (separate 16-bit values) survive."""
+    result = {
+        "MBF_PAR_SMART_TEMP_LOW": 22,
+        "MBF_PAR_SMART_TEMP_HIGH": 28,
+    }
+    neopool_modbus._collapse_u32_register_pairs(result)
+    assert result == {
+        "MBF_PAR_SMART_TEMP_LOW": 22,
+        "MBF_PAR_SMART_TEMP_HIGH": 28,
+    }
+
+
+def test_collapse_u32_pairs_table_has_no_overlap():
+    """Each combined key appears exactly once and its halves are distinct."""
+    combined_keys = [c for c, _, _ in neopool_modbus._U32_REGISTER_PAIRS]
+    assert len(combined_keys) == len(set(combined_keys))
+    halves: list[str] = []
+    for _, low, high in neopool_modbus._U32_REGISTER_PAIRS:
+        halves.append(low)
+        halves.append(high)
+    assert len(halves) == len(set(halves))

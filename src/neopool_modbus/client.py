@@ -27,6 +27,7 @@ from pymodbus.framer import FramerType
 
 from .decoders import (
     build_timer_block,
+    combine_u32,
     get_filtration_speed,
     modbus_regs_to_ascii,
     parse_timer_block,
@@ -76,6 +77,55 @@ _NOTIF_MISC = 0x0020  # MBMSK_NOTIF_MISC_CHANGED
 # Safety: force a full register read every N polls so that devices which do not
 # correctly implement the NOTIFICATION register still get periodic refreshes.
 _FULL_READ_INTERVAL = 60
+
+# 32-bit counters the firmware exposes as two adjacent 16-bit registers. After
+# every read we collapse each pair into a single combined entry and drop the
+# halves so consumers never have to recombine them by hand.
+_U32_REGISTER_PAIRS: tuple[tuple[str, str, str], ...] = (
+    # (combined_key, low_key, high_key)
+    ("MBF_CELL_RUNTIME", "MBF_CELL_RUNTIME_LOW", "MBF_CELL_RUNTIME_HIGH"),
+    (
+        "MBF_CELL_RUNTIME_PART",
+        "MBF_CELL_RUNTIME_PART_LOW",
+        "MBF_CELL_RUNTIME_PART_HIGH",
+    ),
+    (
+        "MBF_CELL_RUNTIME_POLA",
+        "MBF_CELL_RUNTIME_POLA_LOW",
+        "MBF_CELL_RUNTIME_POLA_HIGH",
+    ),
+    (
+        "MBF_CELL_RUNTIME_POLB",
+        "MBF_CELL_RUNTIME_POLB_LOW",
+        "MBF_CELL_RUNTIME_POLB_HIGH",
+    ),
+    (
+        "MBF_CELL_RUNTIME_POL_CHANGES",
+        "MBF_CELL_RUNTIME_POL_CHANGES_LOW",
+        "MBF_CELL_RUNTIME_POL_CHANGES_HIGH",
+    ),
+    ("MBF_PAR_TIME", "MBF_PAR_TIME_LOW", "MBF_PAR_TIME_HIGH"),
+    (
+        "MBF_PAR_FILTERING_TIME",
+        "MBF_PAR_FILTERING_TIME_LOW",
+        "MBF_PAR_FILTERING_TIME_HIGH",
+    ),
+    (
+        "MBF_PAR_INTELLIGENT_INTERVAL_TIME",
+        "MBF_PAR_INTELLIGENT_INTERVAL_TIME_LOW",
+        "MBF_PAR_INTELLIGENT_INTERVAL_TIME_HIGH",
+    ),
+)
+
+
+def _collapse_u32_register_pairs(result: dict[str, Any]) -> None:
+    """Replace each known LOW/HIGH register pair with a single combined entry."""
+    for combined, low_key, high_key in _U32_REGISTER_PAIRS:
+        low = result.pop(low_key, None)
+        high = result.pop(high_key, None)
+        value = combine_u32(low, high)
+        if value is not None:
+            result[combined] = value
 
 
 class NeoPoolModbusClient:
@@ -1071,6 +1121,8 @@ class NeoPoolModbusClient:
 
         # Add filtration speed and type
         result["FILTRATION_SPEED"] = get_filtration_speed(result)
+
+        _collapse_u32_register_pairs(result)
 
         # Update cache after fixup and derived fields so partial reads
         # start from consistent values including derived flags.
