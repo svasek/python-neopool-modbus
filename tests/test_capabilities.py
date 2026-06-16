@@ -17,12 +17,16 @@ import pytest
 from neopool_modbus import capabilities
 from neopool_modbus.capabilities import (
     CAPABILITY_KEYS,
+    available_cell_boost_modes,
+    available_filtration_modes,
+    available_filtration_speeds,
     capability_snapshot,
     has_filtvalve,
     has_heating_relay,
     has_variable_speed_pump,
     is_chlorine_module_present,
     is_conductivity_module_present,
+    is_heating_mode_enabled,
     is_hydrolysis_present,
     is_ionization_present,
     is_ph_module_present,
@@ -177,6 +181,7 @@ _ALL_PREDICATES = (
     has_variable_speed_pump,
     is_chlorine_module_present,
     is_conductivity_module_present,
+    is_heating_mode_enabled,
     is_hydrolysis_present,
     is_ionization_present,
     is_ph_module_present,
@@ -222,3 +227,132 @@ def test_all_public_capabilities_predicates_are_in_all():
         == capabilities.__name__
     }
     assert public.issubset(set(capabilities.__all__))
+
+
+# ---------------------------------------------------------------------------
+# is_heating_mode_enabled
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"MBF_PAR_HEATING_MODE": 1}, True),
+        ({"MBF_PAR_HEATING_MODE": 0}, False),
+        ({"MBF_PAR_HEATING_MODE": 2}, False),  # only value 1 enables heating
+        ({"MBF_PAR_HEATING_MODE": None}, False),
+        ({}, False),
+    ],
+)
+def test_is_heating_mode_enabled(data, expected):
+    assert is_heating_mode_enabled(data) is expected
+
+
+# ---------------------------------------------------------------------------
+# available_filtration_modes
+# ---------------------------------------------------------------------------
+
+
+def test_available_filtration_modes_minimum_set():
+    """No capabilities -> only manual + auto are available."""
+    assert available_filtration_modes({}) == ("manual", "auto")
+
+
+def test_available_filtration_modes_with_temperature_only():
+    """Active temperature alone unlocks smart but not heating/intelligent."""
+    data = {"MBF_PAR_TEMPERATURE_ACTIVE": 1}
+    assert available_filtration_modes(data) == ("manual", "auto", "smart")
+
+
+def test_available_filtration_modes_full_heating_chain():
+    """Heating relay + temperature + heating mode enabled -> heating + intelligent."""
+    data = {
+        "MBF_PAR_TEMPERATURE_ACTIVE": 1,
+        "MBF_PAR_HEATING_GPIO": 3,
+        "MBF_PAR_HEATING_MODE": 1,
+    }
+    assert available_filtration_modes(data) == (
+        "manual",
+        "auto",
+        "heating",
+        "smart",
+        "intelligent",
+    )
+
+
+def test_available_filtration_modes_heating_requires_mode_enabled():
+    """Heating relay + temperature without MBF_PAR_HEATING_MODE -> only smart."""
+    data = {
+        "MBF_PAR_TEMPERATURE_ACTIVE": 1,
+        "MBF_PAR_HEATING_GPIO": 3,
+        "MBF_PAR_HEATING_MODE": 0,
+    }
+    assert available_filtration_modes(data) == ("manual", "auto", "smart")
+
+
+def test_available_filtration_modes_with_filtvalve():
+    """A configured filter valve adds backwash."""
+    data = {"MBF_PAR_FILTVALVE_GPIO": 5}
+    assert available_filtration_modes(data) == ("manual", "auto", "backwash")
+
+
+def test_available_filtration_modes_full_set():
+    """Full hardware -> all six modes in canonical order."""
+    data = {
+        "MBF_PAR_TEMPERATURE_ACTIVE": 1,
+        "MBF_PAR_HEATING_GPIO": 3,
+        "MBF_PAR_HEATING_MODE": 1,
+        "MBF_PAR_FILTVALVE_GPIO": 5,
+    }
+    assert available_filtration_modes(data) == (
+        "manual",
+        "auto",
+        "heating",
+        "smart",
+        "intelligent",
+        "backwash",
+    )
+
+
+# ---------------------------------------------------------------------------
+# available_filtration_speeds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({}, ()),
+        ({"MBF_PAR_FILTRATION_CONF": 0}, ()),
+        ({"MBF_PAR_FILTRATION_CONF": 1}, ("low", "mid", "high")),
+        ({"MBF_PAR_FILTRATION_CONF": 2}, ("low", "mid", "high")),
+    ],
+)
+def test_available_filtration_speeds(data, expected):
+    assert available_filtration_speeds(data) == expected
+
+
+# ---------------------------------------------------------------------------
+# available_cell_boost_modes
+# ---------------------------------------------------------------------------
+
+
+def test_available_cell_boost_modes_no_hydrolysis_returns_empty():
+    assert available_cell_boost_modes({}) == ()
+
+
+def test_available_cell_boost_modes_with_hydrolysis_no_redox():
+    data = {"Hydrolysis module detected": True}
+    assert available_cell_boost_modes(data) == ("inactive", "active")
+
+
+def test_available_cell_boost_modes_with_hydrolysis_and_redox():
+    data = {
+        "Hydrolysis module detected": True,
+        "Redox measurement module detected": True,
+    }
+    assert available_cell_boost_modes(data) == (
+        "inactive",
+        "active",
+        "active_with_redox",
+    )

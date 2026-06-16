@@ -49,6 +49,7 @@ CAPABILITY_KEYS: tuple[str, ...] = (
     "MBF_PAR_FILTVALVE_ENABLE",
     "MBF_PAR_FILTVALVE_GPIO",
     "MBF_PAR_HEATING_GPIO",
+    "MBF_PAR_HEATING_MODE",
     "MBF_PAR_MODEL",
     "MBF_PAR_TEMPERATURE_ACTIVE",
     "Redox measurement module detected",
@@ -128,14 +129,74 @@ def has_filtvalve(data: dict[str, Any]) -> bool:
     return is_valid_relay_gpio(gpio) or enable != 0
 
 
+def is_heating_mode_enabled(data: dict[str, Any]) -> bool:
+    """True when MBF_PAR_HEATING_MODE is set to its enabled value (1)."""
+    return int(data.get("MBF_PAR_HEATING_MODE") or 0) == 1
+
+
+def available_filtration_modes(data: dict[str, Any]) -> tuple[str, ...]:
+    """Return the filtration modes that make sense for this controller.
+
+    ``manual`` and ``auto`` are always available. ``smart`` requires the
+    temperature sensor to be active; ``heating`` and ``intelligent``
+    additionally need the heating relay assigned and MBF_PAR_HEATING_MODE
+    enabled. ``backwash`` is offered when an automatic filter valve is
+    configured.
+    """
+    modes: list[str] = ["manual", "auto"]
+    temperature_active = is_temperature_active(data)
+    heating_ready = (
+        temperature_active and has_heating_relay(data) and is_heating_mode_enabled(data)
+    )
+    if heating_ready:
+        modes.append("heating")
+    if temperature_active:
+        modes.append("smart")
+    if heating_ready:
+        modes.append("intelligent")
+    if has_filtvalve(data):
+        modes.append("backwash")
+    return tuple(modes)
+
+
+def available_filtration_speeds(data: dict[str, Any]) -> tuple[str, ...]:
+    """Return the speeds offered by a variable-speed filtration pump.
+
+    Empty when the configured pump is single-speed. ``off`` is a valid wire
+    value but is not surfaced as a select option since stopping the pump is
+    typically driven by the filtration mode rather than the speed select.
+    """
+    if not has_variable_speed_pump(data):
+        return ()
+    return ("low", "mid", "high")
+
+
+def available_cell_boost_modes(data: dict[str, Any]) -> tuple[str, ...]:
+    """Return the cell-boost modes offered by this controller.
+
+    Empty without a hydrolysis cell. ``active_with_redox`` is only offered
+    when the redox measurement module is also present; without it the user
+    can still run the boost without redox-driven dosing.
+    """
+    if not is_hydrolysis_present(data):
+        return ()
+    if is_redox_module_present(data):
+        return ("inactive", "active", "active_with_redox")
+    return ("inactive", "active")
+
+
 __all__ = [
     "CAPABILITY_KEYS",
+    "available_cell_boost_modes",
+    "available_filtration_modes",
+    "available_filtration_speeds",
     "capability_snapshot",
     "has_filtvalve",
     "has_heating_relay",
     "has_variable_speed_pump",
     "is_chlorine_module_present",
     "is_conductivity_module_present",
+    "is_heating_mode_enabled",
     "is_hydrolysis_present",
     "is_ionization_present",
     "is_ph_module_present",
