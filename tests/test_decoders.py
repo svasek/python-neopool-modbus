@@ -17,6 +17,7 @@ import pytest
 
 from neopool_modbus.decoders import (
     build_timer_block,
+    combine_u32,
     generate_time_options,
     get_filtration_pump_type,
     get_filtration_speed,
@@ -468,3 +469,36 @@ def test_get_machine_name_non_generic_ignores_custom_name():
         "MBF_PAR_UICFG_MACH_NAME_LIGHT": "else",
     }
     assert get_machine_name(data) == "Hay"
+
+
+# ---------------------------------------------------------------------------
+# combine_u32
+# ---------------------------------------------------------------------------
+
+
+def test_combine_u32_combines_low_and_high_words():
+    """combine_u32 returns (high << 16) | low."""
+    assert combine_u32(0x1234, 0x5678) == 0x56781234
+
+
+def test_combine_u32_handles_zero_values():
+    """Both halves at 0 -> 0; not None."""
+    assert combine_u32(0, 0) == 0
+
+
+def test_combine_u32_handles_max_32bit():
+    """0xFFFF / 0xFFFF -> 0xFFFFFFFF (full 32-bit range)."""
+    assert combine_u32(0xFFFF, 0xFFFF) == 0xFFFFFFFF
+
+
+@pytest.mark.parametrize(
+    ("low", "high"),
+    [
+        (None, None),
+        (1, None),
+        (None, 1),
+    ],
+)
+def test_combine_u32_missing_or_none_returns_none(low, high):
+    """Either half being None yields None."""
+    assert combine_u32(low, high) is None

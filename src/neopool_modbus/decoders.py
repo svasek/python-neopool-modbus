@@ -32,6 +32,13 @@ def parse_version(val: int | str | None) -> str:
     return "?"
 
 
+def combine_u32(low: int | None, high: int | None) -> int | None:
+    """Return ``(high << 16) | low``, or ``None`` if either half is missing."""
+    if low is None or high is None:
+        return None
+    return (int(high) << 16) | int(low)
+
+
 def modbus_regs_to_ascii(regs: list[int]) -> str:
     """Convert list of uint16 Modbus registers to ASCII string (ASCIIZ, max 10 chars)."""
     chars: list[str] = []
@@ -266,6 +273,7 @@ def is_hydrolysis_in_percent(data: dict[str, Any]) -> bool:
 
 __all__ = [
     "build_timer_block",
+    "combine_u32",
     "generate_time_options",
     "get_filtration_pump_type",
     "get_filtration_speed",
