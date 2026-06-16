@@ -18,6 +18,7 @@ import pytest
 from neopool_modbus.decoders import (
     build_timer_block,
     combine_u32,
+    decode_par_model_modules,
     generate_time_options,
     get_filtration_pump_type,
     get_filtration_speed,
@@ -502,3 +503,27 @@ def test_combine_u32_handles_max_32bit():
 def test_combine_u32_missing_or_none_returns_none(low, high):
     """Either half being None yields None."""
     assert combine_u32(low, high) is None
+
+
+# ---------------------------------------------------------------------------
+# decode_par_model_modules
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("bitmask", "expected"),
+    [
+        (0x0001, ["ionization"]),
+        (0x0002, ["hydrolysis"]),
+        (0x0004, ["uv_lamp"]),
+        (0x0008, ["salinity"]),
+        (0x000F, ["ionization", "hydrolysis", "uv_lamp", "salinity"]),
+        (0x000A, ["hydrolysis", "salinity"]),
+        (0x0000, []),
+        (None, []),
+        # Unknown bits above the documented mask must not introduce phantom names.
+        (0x0010, []),
+    ],
+)
+def test_decode_par_model_modules(bitmask, expected):
+    assert decode_par_model_modules(bitmask) == expected

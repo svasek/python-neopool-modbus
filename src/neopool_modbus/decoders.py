@@ -39,6 +39,27 @@ def combine_u32(low: int | None, high: int | None) -> int | None:
     return (int(high) << 16) | int(low)
 
 
+# MBF_PAR_MODEL bitmask -- which optional modules the controller has installed.
+_MBMSK_MODEL_ION = 0x0001
+_MBMSK_MODEL_HIDROLYSIS = 0x0002
+_MBMSK_MODEL_UV = 0x0004
+_MBMSK_MODEL_SALINITY = 0x0008
+
+_PAR_MODEL_MODULES: tuple[tuple[int, str], ...] = (
+    (_MBMSK_MODEL_ION, "ionization"),
+    (_MBMSK_MODEL_HIDROLYSIS, "hydrolysis"),
+    (_MBMSK_MODEL_UV, "uv_lamp"),
+    (_MBMSK_MODEL_SALINITY, "salinity"),
+)
+
+
+def decode_par_model_modules(bitmask: int | None) -> list[str]:
+    """Return the optional modules encoded in MBF_PAR_MODEL, ordered by bit."""
+    if bitmask is None:
+        return []
+    return [name for mask, name in _PAR_MODEL_MODULES if bitmask & mask]
+
+
 def modbus_regs_to_ascii(regs: list[int]) -> str:
     """Convert list of uint16 Modbus registers to ASCII string (ASCIIZ, max 10 chars)."""
     chars: list[str] = []
@@ -274,6 +295,7 @@ def is_hydrolysis_in_percent(data: dict[str, Any]) -> bool:
 __all__ = [
     "build_timer_block",
     "combine_u32",
+    "decode_par_model_modules",
     "generate_time_options",
     "get_filtration_pump_type",
     "get_filtration_speed",
