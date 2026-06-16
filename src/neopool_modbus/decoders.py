@@ -158,6 +158,30 @@ def encode_filtration_speed(name: str) -> int:
         ) from None
 
 
+_SECONDS_PER_DAY = 86400
+
+
+def derive_timer_stop(on: int | None, interval: int | None) -> int | None:
+    """Return ``(on + interval) % 86400``, or ``None`` if either input is missing."""
+    if on is None or interval is None:
+        return None
+    return (int(on) + int(interval)) % _SECONDS_PER_DAY
+
+
+def aggregate_filtration_remaining(data: dict[str, Any]) -> int | None:
+    """Return the largest positive ``filtration{1,2,3}_countdown`` in *data*.
+
+    Returns ``None`` when none of the three filtration timers reports a
+    positive countdown.
+    """
+    remaining: int | None = None
+    for n in (1, 2, 3):
+        cd = data.get(f"filtration{n}_countdown")
+        if cd is not None and cd > 0:
+            remaining = max(remaining or 0, int(cd))
+    return remaining
+
+
 def modbus_regs_to_ascii(regs: list[int]) -> str:
     """Convert list of uint16 Modbus registers to ASCII string (ASCIIZ, max 10 chars)."""
     chars: list[str] = []
@@ -391,12 +415,14 @@ def is_hydrolysis_in_percent(data: dict[str, Any]) -> bool:
 
 
 __all__ = [
+    "aggregate_filtration_remaining",
     "build_timer_block",
     "combine_u32",
     "decode_cell_boost",
     "decode_filtration_mode",
     "decode_filtration_speed",
     "decode_par_model_modules",
+    "derive_timer_stop",
     "encode_cell_boost",
     "encode_filtration_mode",
     "encode_filtration_speed",

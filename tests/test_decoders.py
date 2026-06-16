@@ -16,12 +16,14 @@
 import pytest
 
 from neopool_modbus.decoders import (
+    aggregate_filtration_remaining,
     build_timer_block,
     combine_u32,
     decode_cell_boost,
     decode_filtration_mode,
     decode_filtration_speed,
     decode_par_model_modules,
+    derive_timer_stop,
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
@@ -656,3 +658,78 @@ def test_encode_filtration_speed(name, expected):
 def test_encode_filtration_speed_rejects_unknown():
     with pytest.raises(ValueError, match="unknown filtration speed"):
         encode_filtration_speed("turbo")
+
+
+# ---------------------------------------------------------------------------
+# derive_timer_stop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("on", "interval", "expected"),
+    [
+        # Same-day stop
+        (3600, 7200, 10800),
+        # Stop at midnight wraps cleanly to 0 (the modulo)
+        (86000, 400, 0),
+        # Over-midnight wrap: 85000 + 5000 = 90000 -> 90000 - 86400 = 3600
+        (85000, 5000, 3600),
+        # Boundary: zero interval keeps the start time
+        (3600, 0, 3600),
+        # Either input missing -> None
+        (None, 100, None),
+        (100, None, None),
+        (None, None, None),
+    ],
+)
+def test_derive_timer_stop(on, interval, expected):
+    assert derive_timer_stop(on, interval) == expected
+
+
+# ---------------------------------------------------------------------------
+# aggregate_filtration_remaining
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_filtration_remaining_returns_largest_positive():
+    """The aggregate is the max of the three positive countdowns."""
+    data = {
+        "filtration1_countdown": 1200,
+        "filtration2_countdown": 3600,
+        "filtration3_countdown": 600,
+    }
+    assert aggregate_filtration_remaining(data) == 3600
+
+
+def test_aggregate_filtration_remaining_ignores_non_positive():
+    """Zero, negative or missing countdowns are ignored."""
+    data = {
+        "filtration1_countdown": 0,
+        "filtration2_countdown": 1500,
+        # filtration3_countdown missing
+    }
+    assert aggregate_filtration_remaining(data) == 1500
+
+
+def test_aggregate_filtration_remaining_all_inactive_returns_none():
+    """No active timers -> None (so the integration knows there is no remaining time)."""
+    data = {
+        "filtration1_countdown": 0,
+        "filtration2_countdown": None,
+        "filtration3_countdown": -1,
+    }
+    assert aggregate_filtration_remaining(data) is None
+
+
+def test_aggregate_filtration_remaining_empty_data_returns_none():
+    assert aggregate_filtration_remaining({}) is None
+
+
+def test_aggregate_filtration_remaining_ignores_other_keys():
+    """Keys outside the three filtration timers must not contribute."""
+    data = {
+        "filtration1_countdown": 100,
+        "filtration4_countdown": 9999,  # nonexistent timer index
+        "relay_aux1_countdown": 9999,
+    }
+    assert aggregate_filtration_remaining(data) == 100
