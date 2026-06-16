@@ -30,7 +30,7 @@ from neopool_modbus.exceptions import (
 
 @pytest.fixture
 def config():
-    return {"host": "127.0.0.1", "port": 502, "slave_id": 1}
+    return {"host": "127.0.0.1", "port": 502, "unit_id": 1}
 
 
 @pytest.fixture(autouse=True)
@@ -72,10 +72,40 @@ def test_framer_defaults_to_socket(config):
     assert client._framer == FramerType.SOCKET
 
 
+def test_unit_id_from_config():
+    """``unit_id`` in the config is the source of truth."""
+    client = neopool_modbus.NeoPoolModbusClient(
+        {"host": "127.0.0.1", "port": 502, "unit_id": 7}
+    )
+    assert client._unit == 7
+
+
+def test_legacy_slave_id_falls_back_when_unit_id_missing():
+    """Legacy ``slave_id`` config is still honoured for backwards compatibility."""
+    client = neopool_modbus.NeoPoolModbusClient(
+        {"host": "127.0.0.1", "port": 502, "slave_id": 3}
+    )
+    assert client._unit == 3
+
+
+def test_unit_id_takes_precedence_over_slave_id():
+    """When both keys are present, ``unit_id`` wins."""
+    client = neopool_modbus.NeoPoolModbusClient(
+        {"host": "127.0.0.1", "port": 502, "unit_id": 5, "slave_id": 9}
+    )
+    assert client._unit == 5
+
+
+def test_unit_id_defaults_to_one_when_neither_key_present():
+    """Neither ``unit_id`` nor ``slave_id`` set: default to ``1``."""
+    client = neopool_modbus.NeoPoolModbusClient({"host": "127.0.0.1", "port": 502})
+    assert client._unit == 1
+
+
 def test_framer_tcp_maps_to_socket():
     """Test that modbus_framer='tcp' maps to FramerType.SOCKET."""
     client = neopool_modbus.NeoPoolModbusClient(
-        {"host": "127.0.0.1", "port": 502, "slave_id": 1, "modbus_framer": "tcp"}
+        {"host": "127.0.0.1", "port": 502, "unit_id": 1, "modbus_framer": "tcp"}
     )
     assert client._framer == FramerType.SOCKET
 
@@ -83,7 +113,7 @@ def test_framer_tcp_maps_to_socket():
 def test_framer_rtu_maps_to_rtu():
     """Test that modbus_framer='rtu' maps to FramerType.RTU."""
     client = neopool_modbus.NeoPoolModbusClient(
-        {"host": "127.0.0.1", "port": 502, "slave_id": 1, "modbus_framer": "rtu"}
+        {"host": "127.0.0.1", "port": 502, "unit_id": 1, "modbus_framer": "rtu"}
     )
     assert client._framer == FramerType.RTU
 
@@ -97,7 +127,7 @@ def test_framer_normalizes_case_and_whitespace():
         ("RTU", FramerType.RTU),
     ]:
         client = neopool_modbus.NeoPoolModbusClient(
-            {"host": "127.0.0.1", "port": 502, "slave_id": 1, "modbus_framer": value}
+            {"host": "127.0.0.1", "port": 502, "unit_id": 1, "modbus_framer": value}
         )
         assert client._framer == expected, f"Expected {expected} for input {value!r}"
 
@@ -111,7 +141,7 @@ def test_framer_unknown_value_falls_back_to_socket_with_warning(caplog):
             {
                 "host": "127.0.0.1",
                 "port": 502,
-                "slave_id": 1,
+                "unit_id": 1,
                 "modbus_framer": "invalid",
             }
         )
@@ -130,7 +160,7 @@ async def test_establish_connection_passes_framer_to_client():
             {
                 "host": "127.0.0.1",
                 "port": 502,
-                "slave_id": 1,
+                "unit_id": 1,
                 "modbus_framer": framer_str,
             }
         )
@@ -1483,8 +1513,8 @@ async def test_get_client_respects_backoff(config):
 
 # --- FC20 broadcast filter tests ---
 
-RTU_CONFIG = {"host": "127.0.0.1", "port": 502, "slave_id": 1, "modbus_framer": "rtu"}
-TCP_CONFIG = {"host": "127.0.0.1", "port": 502, "slave_id": 1, "modbus_framer": "tcp"}
+RTU_CONFIG = {"host": "127.0.0.1", "port": 502, "unit_id": 1, "modbus_framer": "rtu"}
+TCP_CONFIG = {"host": "127.0.0.1", "port": 502, "unit_id": 1, "modbus_framer": "tcp"}
 
 
 def _client_with_ctx(
@@ -1609,14 +1639,14 @@ def test_install_fc20_filter_rtu_passes_normal_frames():
 
 
 def test_install_fc20_filter_rtu_wrong_unit_id_not_filtered():
-    """FC20 frames from a different slave ID are NOT filtered with RTU framing."""
-    cfg = {**RTU_CONFIG, "slave_id": 2}
+    """FC20 frames from a different unit ID are NOT filtered with RTU framing."""
+    cfg = {**RTU_CONFIG, "unit_id": 2}
     client, mock_ctx, mock_client, received = _client_with_ctx(cfg)
     client._install_fc20_filter(mock_client)
 
     frame = bytes([1, 0x20, 0x02, 0x01])
     mock_ctx.data_received(frame)
-    assert received == [frame], "Frame from different slave ID should not be filtered"
+    assert received == [frame], "Frame from different unit ID should not be filtered"
 
 
 # ---- SOCKET (Modbus TCP) framing ----

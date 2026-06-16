@@ -83,12 +83,13 @@ class NeoPoolModbusClient:
         """Initialise the client from a config mapping.
 
         ``config`` must contain ``host``; ``port`` (default 502),
-        ``slave_id`` (default 1) and ``modbus_framer`` (default ``tcp``)
-        are optional.
+        ``unit_id`` (default 1) and ``modbus_framer`` (default ``tcp``)
+        are optional. The legacy ``slave_id`` key is still accepted as a
+        fallback when ``unit_id`` is not present.
         """
         self._host: str = config["host"]
         self._port = config.get("port", 502)
-        self._unit = config.get("slave_id", 1)
+        self._unit = config.get("unit_id", config.get("slave_id", 1))
         _framer_str = config.get("modbus_framer", DEFAULT_MODBUS_FRAMER).strip().lower()
         if _framer_str == "rtu":
             self._framer = FramerType.RTU
@@ -258,7 +259,7 @@ class NeoPoolModbusClient:
 
         The filter works for both framing modes:
 
-        - **RTU framing**: The frame layout is (slave_id, function_code, ...). An FC20
+        - **RTU framing**: The frame layout is (unit_id, function_code, ...). An FC20
           broadcast is identified by data[0] == unit_id and data[1] == 0x20.
 
         - **SOCKET (Modbus TCP) framing**: The first two bytes are the MBAP Transaction
@@ -292,8 +293,8 @@ class NeoPoolModbusClient:
 
             def filtered_data_received(data: bytes) -> None:
                 nonlocal _socket_buf
-                # FC20 broadcasts from Sugar Valley: slave_id byte followed by 0x20.
-                # For RTU framing: data[0]=slave_id, data[1]=function_code.
+                # FC20 broadcasts from Sugar Valley: unit_id byte followed by 0x20.
+                # For RTU framing: data[0]=unit_id, data[1]=function_code.
                 # For SOCKET framing: data[0:2]=TID, data[2:4]=Protocol ID (0x0000
                 # for valid Modbus TCP). Raw FC20 broadcasts have no MBAP header, so
                 # bytes 2-3 are NOT 0x0000 - this is the distinguishing signal.

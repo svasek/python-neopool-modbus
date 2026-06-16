@@ -72,10 +72,52 @@ async def test_async_probe_serial_happy_path():
     )
     with patch("neopool_modbus.probe.AsyncModbusTcpClient", return_value=fake_client):
         serial = await async_probe_serial(
-            "192.0.2.10", port=502, slave_id=1, framer="tcp", timeout=2.0
+            "192.0.2.10", port=502, unit_id=1, framer="tcp", timeout=2.0
         )
     assert serial == "000100AC00CD001200340000"
     fake_client.connect.assert_awaited_once()
+    fake_client.read_holding_registers.assert_awaited_once_with(
+        address=0x0004, count=6, device_id=1
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_legacy_slave_id_alias():
+    """Calling probe with the legacy ``slave_id`` keyword still routes to ``device_id``."""
+    fake_client = _make_client(
+        connect_result=True,
+        read_result=_make_response([0x0001, 0x00AC, 0x00CD, 0x0012, 0x0034, 0x0000]),
+    )
+    with patch("neopool_modbus.probe.AsyncModbusTcpClient", return_value=fake_client):
+        await async_probe_serial("192.0.2.10", slave_id=4, timeout=2.0)
+    fake_client.read_holding_registers.assert_awaited_once_with(
+        address=0x0004, count=6, device_id=4
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_id_takes_precedence_over_slave_id():
+    """When both ``unit_id`` and ``slave_id`` are passed, ``unit_id`` wins."""
+    fake_client = _make_client(
+        connect_result=True,
+        read_result=_make_response([0x0001, 0x00AC, 0x00CD, 0x0012, 0x0034, 0x0000]),
+    )
+    with patch("neopool_modbus.probe.AsyncModbusTcpClient", return_value=fake_client):
+        await async_probe_serial("192.0.2.10", unit_id=2, slave_id=9, timeout=2.0)
+    fake_client.read_holding_registers.assert_awaited_once_with(
+        address=0x0004, count=6, device_id=2
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_id_defaults_to_one():
+    """Neither ``unit_id`` nor ``slave_id`` provided: defaults to ``1``."""
+    fake_client = _make_client(
+        connect_result=True,
+        read_result=_make_response([0x0001, 0x00AC, 0x00CD, 0x0012, 0x0034, 0x0000]),
+    )
+    with patch("neopool_modbus.probe.AsyncModbusTcpClient", return_value=fake_client):
+        await async_probe_serial("192.0.2.10", timeout=2.0)
     fake_client.read_holding_registers.assert_awaited_once_with(
         address=0x0004, count=6, device_id=1
     )
