@@ -19,10 +19,16 @@ and returns whether a given module is present on the controller. The runtime
 status bits (set by ``status_mask`` decoders) are preferred where available;
 factory-only modules without a runtime indicator (ION, UV, salinity) fall back
 to the ``MBF_PAR_MODEL`` bitmask.
+
+The predicates are pure: no I/O, no global state. Callers that need module
+presence to survive a Home Assistant restart while the controller is offline
+should persist a :func:`capability_snapshot` and feed it back when the live
+read is unavailable.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .decoders import get_filtration_pump_type
@@ -31,6 +37,28 @@ from .registers import is_valid_relay_gpio
 _MBMSK_MODEL_ION = 0x0001
 _MBMSK_MODEL_UV = 0x0004
 _MBMSK_MODEL_SALINITY = 0x0008
+
+# Every key any of the predicates below consults. capability_snapshot()
+# extracts exactly this subset so a persisted snapshot stays predicate-complete
+# across restarts.
+CAPABILITY_KEYS: tuple[str, ...] = (
+    "Chlorine measurement module detected",
+    "Conductivity measurement module detected",
+    "Hydrolysis module detected",
+    "MBF_PAR_FILTRATION_CONF",
+    "MBF_PAR_FILTVALVE_ENABLE",
+    "MBF_PAR_FILTVALVE_GPIO",
+    "MBF_PAR_HEATING_GPIO",
+    "MBF_PAR_MODEL",
+    "MBF_PAR_TEMPERATURE_ACTIVE",
+    "Redox measurement module detected",
+    "pH measurement module detected",
+)
+
+
+def capability_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the subset of *data* that the capability predicates consult."""
+    return {k: data[k] for k in CAPABILITY_KEYS if k in data}
 
 
 def is_hydrolysis_present(data: dict[str, Any]) -> bool:
@@ -101,6 +129,8 @@ def has_filtvalve(data: dict[str, Any]) -> bool:
 
 
 __all__ = [
+    "CAPABILITY_KEYS",
+    "capability_snapshot",
     "has_filtvalve",
     "has_heating_relay",
     "has_variable_speed_pump",

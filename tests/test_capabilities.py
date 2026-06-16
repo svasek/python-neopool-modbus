@@ -14,7 +14,10 @@
 
 import pytest
 
+from neopool_modbus import capabilities
 from neopool_modbus.capabilities import (
+    CAPABILITY_KEYS,
+    capability_snapshot,
     has_filtvalve,
     has_heating_relay,
     has_variable_speed_pump,
@@ -130,3 +133,92 @@ def test_has_variable_speed_pump(conf, expected):
 )
 def test_has_filtvalve(data, expected):
     assert has_filtvalve(data) is expected
+
+
+# ---------------------------------------------------------------------------
+# capability_snapshot + CAPABILITY_KEYS
+# ---------------------------------------------------------------------------
+
+
+def test_capability_snapshot_extracts_only_listed_keys():
+    """Snapshot keeps every CAPABILITY_KEYS that is present and drops the rest."""
+    data = {
+        "MBF_PAR_MODEL": 0x000F,
+        "Hydrolysis module detected": True,
+        # Not in CAPABILITY_KEYS, must be dropped:
+        "MBF_FOO_BAR": 42,
+        "FILTRATION_SPEED": 2,
+    }
+    snapshot = capability_snapshot(data)
+    assert snapshot == {
+        "MBF_PAR_MODEL": 0x000F,
+        "Hydrolysis module detected": True,
+    }
+
+
+def test_capability_snapshot_skips_missing_keys():
+    """Missing keys are not back-filled; the snapshot mirrors what was present."""
+    assert capability_snapshot({}) == {}
+
+
+def test_capability_snapshot_preserves_falsey_values():
+    """Falsey values (0, False, None) are still part of the snapshot if present."""
+    data = {
+        "MBF_PAR_MODEL": 0,
+        "Hydrolysis module detected": False,
+        "MBF_PAR_FILTVALVE_GPIO": None,
+    }
+    assert capability_snapshot(data) == data
+
+
+_ALL_PREDICATES = (
+    has_filtvalve,
+    has_heating_relay,
+    has_variable_speed_pump,
+    is_chlorine_module_present,
+    is_conductivity_module_present,
+    is_hydrolysis_present,
+    is_ionization_present,
+    is_ph_module_present,
+    is_redox_module_present,
+    is_salinity_module_present,
+    is_temperature_active,
+    is_uv_lamp_present,
+)
+
+
+def test_capability_keys_covers_every_predicate_lookup():
+    """CAPABILITY_KEYS must list every key any predicate consults.
+
+    Without this, a snapshot persisted across a restart could miss a key the
+    predicates need, and the integration would silently lose entities in
+    winter mode.
+    """
+    accessed: set[str] = set()
+
+    class TrackingDict(dict):
+        def get(self, key, default=None):
+            accessed.add(key)
+            return super().get(key, default)
+
+    snapshot = TrackingDict()
+    for predicate in _ALL_PREDICATES:
+        predicate(snapshot)
+
+    missing = accessed - set(CAPABILITY_KEYS)
+    assert not missing, (
+        f"CAPABILITY_KEYS is missing keys read by predicates: {sorted(missing)}"
+    )
+
+
+def test_all_public_capabilities_predicates_are_in_all():
+    """Sanity guard: every is_*/has_* defined in the module surfaces via __all__."""
+    public = {
+        name
+        for name in dir(capabilities)
+        if name.startswith(("is_", "has_"))
+        and callable(getattr(capabilities, name))
+        and getattr(getattr(capabilities, name), "__module__", "")
+        == capabilities.__name__
+    }
+    assert public.issubset(set(capabilities.__all__))
