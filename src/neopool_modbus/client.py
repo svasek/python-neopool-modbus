@@ -31,6 +31,9 @@ from .decoders import (
     decode_cell_boost,
     decode_filtration_mode,
     decode_par_model_modules,
+    encode_cell_boost,
+    encode_filtration_mode,
+    encode_filtration_speed,
     get_filtration_speed,
     modbus_regs_to_ascii,
     parse_timer_block,
@@ -42,10 +45,15 @@ from .exceptions import (
     NeoPoolTimeoutError,
 )
 from .registers import (
+    CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
     DEFAULT_MODBUS_FRAMER,
     EEPROM_SAVE_REGISTER,
     EXEC_REGISTER,
+    FILTRATION_CONF_REGISTER,
+    FILTRATION_MODE_REGISTER,
+    FILTRATION_SPEED_MASK,
+    FILTRATION_SPEED_SHIFT,
     MAX_REGISTERS_PER_READ,
     TIMER_BLOCKS,
     is_input_register,
@@ -1158,6 +1166,38 @@ class NeoPoolModbusClient:
                 await self._safe_close_client()
                 self._client = None
             raise
+
+    async def async_set_filtration_mode(self, mode: str) -> dict[str, Any] | None:
+        """Set the filtration mode (manual / auto / heating / smart / intelligent / backwash)."""
+        return await self.async_write_register(
+            FILTRATION_MODE_REGISTER, encode_filtration_mode(mode), apply=True
+        )
+
+    async def async_set_cell_boost(self, mode: str) -> dict[str, Any] | None:
+        """Set the cell boost mode (inactive / active / active_with_redox)."""
+        return await self.async_write_register(
+            CELL_BOOST_REGISTER, encode_cell_boost(mode), apply=True
+        )
+
+    async def async_set_filtration_speed(self, speed: str) -> dict[str, Any] | None:
+        """Set the filtration pump speed (low / mid / high).
+
+        RMW on bits 4-6 of MBF_PAR_FILTRATION_CONF; uses the cached value
+        from the last :meth:`async_read_all` when available, else reads it
+        fresh and waits 100 ms before the write.
+        """
+        encoded = encode_filtration_speed(speed)
+        current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
+        if current is None:
+            regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
+            current = regs[0]
+            await asyncio.sleep(0.1)
+        new_value = (current & ~FILTRATION_SPEED_MASK) | (
+            encoded << FILTRATION_SPEED_SHIFT
+        )
+        return await self.async_write_register(
+            FILTRATION_CONF_REGISTER, new_value, apply=True
+        )
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:
