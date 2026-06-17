@@ -635,12 +635,11 @@ def test_cell_boost_round_trip():
 @pytest.mark.parametrize(
     ("idx", "expected"),
     [
-        (0, "off"),
-        (1, "low"),
-        (2, "mid"),
-        (3, "high"),
+        (0, "low"),
+        (1, "mid"),
+        (2, "high"),
         (None, None),
-        (4, None),
+        (3, None),
     ],
 )
 def test_decode_filtration_speed(idx, expected):
@@ -649,10 +648,16 @@ def test_decode_filtration_speed(idx, expected):
 
 @pytest.mark.parametrize(
     ("name", "expected"),
-    [("off", 0), ("low", 1), ("mid", 2), ("high", 3)],
+    [("low", 0), ("mid", 1), ("high", 2)],
 )
 def test_encode_filtration_speed(name, expected):
     assert encode_filtration_speed(name) == expected
+
+
+def test_encode_filtration_speed_rejects_off():
+    """``off`` is not encodable -- it lives in filt_mode / manual_state."""
+    with pytest.raises(ValueError, match="unknown filtration speed"):
+        encode_filtration_speed("off")
 
 
 def test_encode_filtration_speed_rejects_unknown():

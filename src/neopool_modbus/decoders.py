@@ -131,8 +131,11 @@ def encode_cell_boost(name: str) -> int:
     )
 
 
-# Filtration-speed indices map to the values returned by get_filtration_speed.
-_FILTRATION_SPEEDS: dict[int, str] = {0: "off", 1: "low", 2: "mid", 3: "high"}
+# Filtration-speed indices map to bits 4-6 of MBF_PAR_FILTRATION_CONF.
+# "Off" is not a value of these bits -- it is signalled by the filtration
+# mode register or the manual filtration-state register, and must be set
+# through those, not via this codec.
+_FILTRATION_SPEEDS: dict[int, str] = {0: "low", 1: "mid", 2: "high"}
 _FILTRATION_SPEED_VALUES: dict[str, int] = {v: k for k, v in _FILTRATION_SPEEDS.items()}
 
 
@@ -146,8 +149,8 @@ def decode_filtration_speed(idx: int | None) -> str | None:
 def encode_filtration_speed(name: str) -> int:
     """Return the speed index for *name*.
 
-    Raises :class:`ValueError` if *name* is not one of ``off``, ``low``,
-    ``mid`` or ``high``.
+    Raises :class:`ValueError` if *name* is not one of ``low``, ``mid``
+    or ``high``.
     """
     try:
         return _FILTRATION_SPEED_VALUES[name]
