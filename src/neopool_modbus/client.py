@@ -49,12 +49,14 @@ from .registers import (
     COMMAND_REGISTERS,
     DEFAULT_MODBUS_FRAMER,
     EEPROM_SAVE_REGISTER,
+    ESCAPE_REGISTER,
     EXEC_REGISTER,
     FILTRATION_CONF_REGISTER,
     FILTRATION_MODE_REGISTER,
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
     MAX_REGISTERS_PER_READ,
+    RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
     is_input_register,
     is_valid_relay_gpio,
@@ -1198,6 +1200,24 @@ class NeoPoolModbusClient:
         return await self.async_write_register(
             FILTRATION_CONF_REGISTER, new_value, apply=True
         )
+
+    async def async_clear_errors(self) -> dict[str, Any] | None:
+        """Clear all device error messages (writes 1 to MBF_ESCAPE)."""
+        return await self.async_write_register(ESCAPE_REGISTER, 1)
+
+    async def async_save_to_eeprom(self) -> dict[str, Any] | None:
+        """Persist the current configuration to EEPROM (MBF_SAVE_TO_EEPROM)."""
+        return await self.async_write_register(EEPROM_SAVE_REGISTER, 1)
+
+    async def async_reset_user_counters(self) -> dict[str, Any] | None:
+        """Reset the user-level counters (cell partial runtime, ION/UV partial work-time).
+
+        The reset is volatile, so this method follows up with a write to
+        MBF_SAVE_TO_EEPROM to make it persistent. Returns the result of
+        the EEPROM-save write.
+        """
+        await self.async_write_register(RESET_USER_COUNTERS_REGISTER, 1)
+        return await self.async_write_register(EEPROM_SAVE_REGISTER, 1)
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:

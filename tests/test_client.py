@@ -3064,3 +3064,46 @@ async def test_async_set_filtration_speed_rejects_unknown(config):
         await client.async_set_filtration_speed("turbo")
     client.async_read_register.assert_not_awaited()
     client.async_write_register.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Command shortcuts (clear errors / save EEPROM / reset user counters)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_clear_errors_writes_one_to_escape(config):
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result = await client.async_clear_errors()
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.ESCAPE_REGISTER, 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_save_to_eeprom_writes_one_to_save_register(config):
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result = await client.async_save_to_eeprom()
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.EEPROM_SAVE_REGISTER, 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_reset_user_counters_resets_then_saves(config):
+    """Reset then chained EEPROM save (the reset is volatile)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(
+        side_effect=[{"ok": "reset"}, {"ok": "saved"}]
+    )
+    result = await client.async_reset_user_counters()
+    # Returns the result of the EEPROM save (the persistence write).
+    assert result == {"ok": "saved"}
+    assert client.async_write_register.await_args_list == [
+        ((neopool_modbus.RESET_USER_COUNTERS_REGISTER, 1),),
+        ((neopool_modbus.EEPROM_SAVE_REGISTER, 1),),
+    ]
