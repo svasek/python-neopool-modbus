@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0](https://github.com/svasek/python-neopool-modbus/compare/v3.0.0...v3.1.0) (2026-06-17)
+
+
+### ✨ Features
+
+* **decoders:** ✨ rename get_filtration_speed to compute_filtration_speed_state ([#20](https://github.com/svasek/python-neopool-modbus/issues/20)) ([414b7ba](https://github.com/svasek/python-neopool-modbus/commit/414b7bae15f53675413fdfe03c4fb0e1d8a2f65e))
+
 ## [3.0.0](https://github.com/svasek/python-neopool-modbus/compare/v2.2.0...v3.0.0) (2026-06-17)
 
 
