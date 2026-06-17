@@ -21,10 +21,21 @@ them via re-export.
 
 from __future__ import annotations
 
+from enum import IntEnum
+
 # Default Modbus framer used when reading from a TCP gateway.
 #   "tcp" -- standard Modbus TCP (MBAP header)
 #   "rtu" -- RTU encoded over TCP (no MBAP, includes CRC)
 DEFAULT_MODBUS_FRAMER = "tcp"
+
+
+class TimerRelayMode(IntEnum):
+    """Relay timer enable register values (MBV_PAR_CTIMER_*)."""
+
+    ENABLED = 1  # timer-controlled (MBV_PAR_CTIMER_ENABLED)
+    ALWAYS_ON = 3  # MBV_PAR_CTIMER_ALWAYS_ON
+    ALWAYS_OFF = 4  # MBV_PAR_CTIMER_ALWAYS_OFF
+
 
 # Single-register write addresses with special semantics.
 MANUAL_FILTRATION_REGISTER = 0x0413
@@ -137,6 +148,7 @@ __all__ = [
     "RESET_USER_COUNTERS_REGISTER",
     "STOP_ALL_MODULES_REGISTER",
     "TIMER_BLOCKS",
+    "TimerRelayMode",
     "is_input_register",
     "is_valid_relay_gpio",
 ]

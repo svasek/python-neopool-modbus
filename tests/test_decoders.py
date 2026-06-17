@@ -41,6 +41,7 @@ from neopool_modbus.decoders import (
     parse_version,
     seconds_to_hhmm,
 )
+from neopool_modbus.registers import TimerRelayMode
 
 
 def test_parse_version():
@@ -744,3 +745,21 @@ def test_aggregate_filtration_remaining_ignores_other_keys():
         "relay_aux1_countdown": 9999,
     }
     assert aggregate_filtration_remaining(data) == 100
+
+
+# ---------------------------------------------------------------------------
+# TimerRelayMode
+# ---------------------------------------------------------------------------
+
+
+def test_timer_relay_mode_values() -> None:
+    """Enum values match vendor spec (MBV_PAR_CTIMER_*)."""
+    assert TimerRelayMode.ENABLED == 1
+    assert TimerRelayMode.ALWAYS_ON == 3
+    assert TimerRelayMode.ALWAYS_OFF == 4
+
+
+def test_timer_relay_mode_is_int() -> None:
+    """TimerRelayMode members compare equal to plain ints."""
+    assert TimerRelayMode.ALWAYS_ON == 3
+    assert TimerRelayMode.ALWAYS_OFF == 4
