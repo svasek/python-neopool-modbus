@@ -115,13 +115,19 @@ from neopool_modbus import (
     async_probe_serial,
 )
 from neopool_modbus.registers import (
+    CELL_BOOST_REGISTER,
     CLEAR_EEPROM_REGISTER,
     COMMAND_REGISTERS,
     COPY_TO_RTC_REGISTER,
     DEFAULT_MODBUS_FRAMER,
+    DEVICE_TIME_REGISTER,
     EEPROM_SAVE_REGISTER,
     ESCAPE_REGISTER,
     EXEC_REGISTER,
+    FILTRATION_CONF_REGISTER,
+    FILTRATION_MODE_REGISTER,
+    FILTRATION_SPEED_MASK,
+    FILTRATION_SPEED_SHIFT,
     HEATING_SETPOINT_REGISTER,
     INPUT_REGISTER_RANGES,
     INTELLIGENT_SETPOINT_REGISTER,
@@ -133,13 +139,43 @@ from neopool_modbus.registers import (
     is_input_register,
     is_valid_relay_gpio,
 )
+from neopool_modbus.capabilities import (
+    CAPABILITY_KEYS,
+    available_cell_boost_modes,
+    available_filtration_modes,
+    available_filtration_speeds,
+    capability_snapshot,
+    has_filtvalve,
+    has_heating_relay,
+    has_variable_speed_pump,
+    is_chlorine_module_present,
+    is_conductivity_module_present,
+    is_heating_mode_enabled,
+    is_hydrolysis_present,
+    is_ionization_present,
+    is_ph_module_present,
+    is_redox_module_present,
+    is_salinity_module_present,
+    is_temperature_active,
+    is_uv_lamp_present,
+)
 from neopool_modbus.decoders import (
-    parse_timer_block,
+    aggregate_filtration_remaining,
     build_timer_block,
-    hhmm_to_seconds,
-    seconds_to_hhmm,
+    combine_u32,
+    decode_cell_boost,
+    decode_filtration_mode,
+    decode_filtration_speed,
+    decode_par_model_modules,
+    derive_timer_stop,
+    encode_cell_boost,
+    encode_filtration_mode,
+    encode_filtration_speed,
     get_machine_name,
+    hhmm_to_seconds,
     is_hydrolysis_in_percent,
+    parse_timer_block,
+    seconds_to_hhmm,
     # ... see neopool_modbus.decoders for the full list
 )
 from neopool_modbus.status_mask import (
@@ -151,6 +187,54 @@ from neopool_modbus.status_mask import (
     decode_ph_rx_cl_cd_status_bits,
 )
 ```
+
+### Capabilities
+
+`neopool_modbus.capabilities` exposes pure predicates over a register
+snapshot (whatever `async_read_all` last returned, or the persisted copy
+an integration keeps for offline / winter-mode operation):
+
+```python
+from neopool_modbus.capabilities import (
+    CAPABILITY_KEYS,
+    capability_snapshot,
+    is_hydrolysis_present,
+    available_filtration_modes,
+)
+
+snapshot = capability_snapshot(data)        # only the keys predicates read
+present = is_hydrolysis_present(data)       # bool
+modes = available_filtration_modes(data)    # ("manual", "auto", ...)
+```
+
+`CAPABILITY_KEYS` is the canonical list of register names every predicate
+consults; persist `capability_snapshot(data)` (not the predicate
+outputs) and the same predicates work later when the device is offline.
+
+### High-level write methods
+
+The client exposes named operations for the writes integrations
+typically need, so callers do not have to reach for raw register
+addresses:
+
+| Method                                         | Effect                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `async_set_filtration_mode(name, apply=True)`  | manual / auto / heating / smart / intelligent / backwash                              |
+| `async_set_cell_boost(name, apply=True)`       | inactive / active / active_with_redox                                                 |
+| `async_set_filtration_speed(name, apply=False)`| low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
+| `async_set_temp_setpoint(raw, apply=True)`     | writes the same scaled value to heating + intelligent registers in sync                |
+| `async_clear_errors()`                         | one-shot to `MBF_ESCAPE`                                                              |
+| `async_save_to_eeprom()`                       | one-shot to `MBF_SAVE_TO_EEPROM`                                                      |
+| `async_reset_user_counters()`                  | resets user counters and chains the EEPROM save (the reset is volatile)                |
+| `async_sync_device_time(low, high)`            | writes the two halves of `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`         |
+
+Unknown mode/speed names raise `ValueError` before any I/O happens.
+
+`apply` controls whether the write triggers an EEPROM save + EXEC after
+the value lands. The defaults match the operation's typical use: the
+filtration mode, cell boost and temperature setpoint persist by
+default; the filtration speed select stays volatile so frequent UI
+adjustments do not wear the controller's EEPROM.
 
 All client methods translate underlying pymodbus exceptions into the
 `NeoPoolError` hierarchy at the library boundary, so callers never need
@@ -186,10 +270,17 @@ out-of-range AUX relay index — those are not transport failures.
 ## Features
 
 - Async I/O on top of `pymodbus.AsyncModbusTcpClient`
-- Batched register reads — one round-trip per protocol page, with
+- Batched register reads -- one round-trip per protocol page, with
   notification-bit-driven cache invalidation so unchanged pages skip the read
 - Public read-by-address API (`async_read_register`) that automatically
   picks Read Input vs Read Holding based on the address
+- High-level decoded views in `async_read_all` (`filtration_mode`,
+  `cell_boost_mode`, `installed_modules`) and 32-bit register pairs
+  (`MBF_PAR_TIME`, `MBF_CELL_RUNTIME`, ...) collapsed into single keys
+- Named write operations for filtration mode / speed, cell boost, temp
+  setpoint, time sync, error clear, EEPROM save, user-counter reset
+- Pure capability predicates over a register snapshot, so an integration
+  can drive UI gating both on live data and on a persisted offline copy
 - Exponential connection retry with bounded backoff
 - Write-and-verify cycle for configuration registers, with auto-clearing
   command registers (`COMMAND_REGISTERS`) excluded from verification

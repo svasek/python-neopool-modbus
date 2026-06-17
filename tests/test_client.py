@@ -507,6 +507,14 @@ async def test_perform_read_all_happy_path(config, monkeypatch):
     # lower 4 bits: 0xC580 & 0x000F = 0
     assert result["MBF_PH_STATUS_ALARM"] == 0
 
+    # Decoded high-level views over raw registers (commit 11):
+    # MBF_PAR_FILT_MODE=10 is unmapped -> None
+    # MBF_CELL_BOOST=0x85A0 -> NO_REDOX bit set -> "active"
+    # MBF_PAR_MODEL=0x0002 -> bit 1 (HIDROLYSIS) -> ["hydrolysis"]
+    assert result["filtration_mode"] is None
+    assert result["cell_boost_mode"] == "active"
+    assert result["installed_modules"] == ["hydrolysis"]
+
     # Verify that all Modbus calls were made as expected
     assert fake_modbus.read_holding_registers.await_count == 10
     assert fake_modbus.read_input_registers.await_count == 1
@@ -2884,3 +2892,303 @@ async def test_async_read_register_modbus_error_propagates(config, monkeypatch):
 
     with pytest.raises(NeoPoolModbusError):
         await client.async_read_register(0x0500)
+
+
+# ---------------------------------------------------------------------------
+# _collapse_u32_register_pairs
+# ---------------------------------------------------------------------------
+
+
+def test_collapse_u32_combines_known_pair():
+    """Each known LOW/HIGH pair is replaced by a single combined entry."""
+    result = {
+        "MBF_PAR_TIME_LOW": 0x5678,
+        "MBF_PAR_TIME_HIGH": 0x1234,
+        "MBF_CELL_RUNTIME_LOW": 100,
+        "MBF_CELL_RUNTIME_HIGH": 0,
+        "MBF_OTHER": 42,
+    }
+    neopool_modbus._collapse_u32_register_pairs(result)
+    assert result["MBF_PAR_TIME"] == 0x12345678
+    assert result["MBF_CELL_RUNTIME"] == 100
+    assert "MBF_PAR_TIME_LOW" not in result
+    assert "MBF_PAR_TIME_HIGH" not in result
+    assert "MBF_CELL_RUNTIME_LOW" not in result
+    assert "MBF_CELL_RUNTIME_HIGH" not in result
+    # Unrelated keys are untouched.
+    assert result["MBF_OTHER"] == 42
+
+
+def test_collapse_u32_skips_pair_with_missing_half():
+    """When one half is missing the combined entry is not emitted."""
+    result = {"MBF_PAR_TIME_LOW": 0x5678}
+    neopool_modbus._collapse_u32_register_pairs(result)
+    # The half we passed in is consumed but no combined entry appears.
+    assert "MBF_PAR_TIME" not in result
+    assert "MBF_PAR_TIME_LOW" not in result
+
+
+def test_collapse_u32_handles_empty_dict():
+    """Calling on an empty dict is a no-op."""
+    result: dict[str, Any] = {}
+    neopool_modbus._collapse_u32_register_pairs(result)
+    assert result == {}
+
+
+def test_collapse_u32_does_not_touch_unrelated_pairs():
+    """Pseudo-pairs like SMART_TEMP_LOW/HIGH (separate 16-bit values) survive."""
+    result = {
+        "MBF_PAR_SMART_TEMP_LOW": 22,
+        "MBF_PAR_SMART_TEMP_HIGH": 28,
+    }
+    neopool_modbus._collapse_u32_register_pairs(result)
+    assert result == {
+        "MBF_PAR_SMART_TEMP_LOW": 22,
+        "MBF_PAR_SMART_TEMP_HIGH": 28,
+    }
+
+
+def test_collapse_u32_pairs_table_has_no_overlap():
+    """Each combined key appears exactly once and its halves are distinct."""
+    combined_keys = [c for c, _, _ in neopool_modbus._U32_REGISTER_PAIRS]
+    assert len(combined_keys) == len(set(combined_keys))
+    halves: list[str] = []
+    for _, low, high in neopool_modbus._U32_REGISTER_PAIRS:
+        halves.append(low)
+        halves.append(high)
+    assert len(halves) == len(set(halves))
+
+
+# ---------------------------------------------------------------------------
+# High-level write methods (filtration mode / cell boost / filtration speed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_mode_writes_encoded_value(config):
+    """Maps the name to the wire value and writes to FILTRATION_MODE_REGISTER."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result = await client.async_set_filtration_mode("smart")
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_MODE_REGISTER, 3, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_mode_rejects_unknown(config):
+    """Unknown mode names raise ValueError before any write happens."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    with pytest.raises(ValueError, match="unknown filtration mode"):
+        await client.async_set_filtration_mode("turbo")
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_mode_apply_override(config):
+    """apply=False keeps the change volatile (no EEPROM save)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    await client.async_set_filtration_mode("smart", apply=False)
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_MODE_REGISTER, 3, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_cell_boost_writes_encoded_value(config):
+    """active_with_redox encodes to MBMSK_CELL_BOOST_ACTIVE (0x05A0)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result = await client.async_set_cell_boost("active_with_redox")
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.CELL_BOOST_REGISTER, 0x05A0, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_cell_boost_rejects_unknown(config):
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    with pytest.raises(ValueError, match="unknown cell-boost mode"):
+        await client.async_set_cell_boost("nope")
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_cell_boost_apply_override(config):
+    """apply=False keeps the change volatile (no EEPROM save)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    await client.async_set_cell_boost("inactive", apply=False)
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.CELL_BOOST_REGISTER, 0, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_speed_uses_cache_when_available(config):
+    """Hot path: read MBF_PAR_FILTRATION_CONF from the cache, no extra read."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    # Current register: pump type 1 in bits 0-3, speed "low" (0) in bits 4-6,
+    # plus an unrelated high-bit set.
+    client._cached_result = {"MBF_PAR_FILTRATION_CONF": 0x8001}
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_filtration_speed("high")
+
+    assert result == {"ok": True}
+    client.async_read_register.assert_not_awaited()
+    # Expected: 0x8001 with bits 4-6 replaced by 2 (high) -> 0x8021.
+    # Default apply=False so the speed change stays volatile.
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x8021, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_speed_falls_back_to_modbus_read(config):
+    """Cold path: cache miss -> read register, sleep, then write."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    # Empty cache forces a fresh read.
+    client._cached_result = {}
+    client.async_read_register = AsyncMock(return_value=[0x0021])  # currently "high"
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=fake_sleep):
+        await client.async_set_filtration_speed("low")
+
+    client.async_read_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_CONF_REGISTER
+    )
+    # Settle delay between the read and the write.
+    assert sleeps == [0.1]
+    # Expected: 0x0021 -> mask off 0x70 -> 0x0001 -> OR (0 << 4) = 0x0001.
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x0001, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_speed_apply_override(config):
+    """Caller can opt in to EEPROM persistence with apply=True."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {"MBF_PAR_FILTRATION_CONF": 0x0001}
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_set_filtration_speed("mid", apply=True)
+
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x0011, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_speed_rejects_unknown(config):
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock()
+    with pytest.raises(ValueError, match="unknown filtration speed"):
+        await client.async_set_filtration_speed("turbo")
+    client.async_read_register.assert_not_awaited()
+    client.async_write_register.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Command shortcuts (clear errors / save EEPROM / reset user counters)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_clear_errors_writes_one_to_escape(config):
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result = await client.async_clear_errors()
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.ESCAPE_REGISTER, 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_save_to_eeprom_writes_one_to_save_register(config):
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result = await client.async_save_to_eeprom()
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.EEPROM_SAVE_REGISTER, 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_reset_user_counters_resets_then_saves(config):
+    """Reset then chained EEPROM save (the reset is volatile)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(
+        side_effect=[{"ok": "reset"}, {"ok": "saved"}]
+    )
+    result = await client.async_reset_user_counters()
+    # Returns the result of the EEPROM save (the persistence write).
+    assert result == {"ok": "saved"}
+    assert client.async_write_register.await_args_list == [
+        ((neopool_modbus.RESET_USER_COUNTERS_REGISTER, 1),),
+        ((neopool_modbus.EEPROM_SAVE_REGISTER, 1),),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_sync_device_time_writes_halves_then_copy_to_rtc(config):
+    """Two-step sequence: write [low, high] to MBF_PAR_TIME, then trigger COPY_TO_RTC."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(
+        side_effect=[{"ok": "time"}, {"ok": "copy"}]
+    )
+    result = await client.async_sync_device_time(0x1234, 0x5678)
+    assert result == {"ok": "copy"}
+    assert client.async_write_register.await_args_list == [
+        ((neopool_modbus.DEVICE_TIME_REGISTER, [0x1234, 0x5678]),),
+        ((neopool_modbus.COPY_TO_RTC_REGISTER, 1),),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_set_temp_setpoint_writes_both_registers(config):
+    """The heating + intelligent setpoints stay in sync; second write applies."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(
+        side_effect=[{"ok": "heat"}, {"ok": "intel"}]
+    )
+    result = await client.async_set_temp_setpoint(250)
+    # Returns the result of the apply=True (intelligent) write.
+    assert result == {"ok": "intel"}
+    assert client.async_write_register.await_args_list == [
+        call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
+        call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_set_temp_setpoint_apply_override(config):
+    """apply=False keeps the change volatile (no EEPROM save)."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    await client.async_set_temp_setpoint(250, apply=False)
+    assert client.async_write_register.await_args_list == [
+        call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
+        call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=False),
+    ]

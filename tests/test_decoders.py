@@ -16,7 +16,17 @@
 import pytest
 
 from neopool_modbus.decoders import (
+    aggregate_filtration_remaining,
     build_timer_block,
+    combine_u32,
+    decode_cell_boost,
+    decode_filtration_mode,
+    decode_filtration_speed,
+    decode_par_model_modules,
+    derive_timer_stop,
+    encode_cell_boost,
+    encode_filtration_mode,
+    encode_filtration_speed,
     generate_time_options,
     get_filtration_pump_type,
     get_filtration_speed,
@@ -218,6 +228,7 @@ def test_parse_timer_block_full():
         "off",
         "period",
         "interval",
+        "stop",
         "countdown",
         "function",
         "work_time",
@@ -225,6 +236,10 @@ def test_parse_timer_block_full():
     # Example: on = u32(regs[1], regs[2]) == (regs[2] << 16) | regs[1]
     assert result["enable"] == 1
     assert result["on"] == (3 << 16) | 2
+    # stop = (on + interval) % 86400
+    on = (3 << 16) | 2
+    interval = (9 << 16) | 8
+    assert result["stop"] == (on + interval) % 86400
 
 
 def test_parse_timer_block_short():
@@ -234,7 +249,9 @@ def test_parse_timer_block_short():
     assert result["enable"] == 1
     assert result["on"] == (3 << 16) | 2  # padded msb=3
     assert result["off"] == 0
-    assert len(result) == 8
+    # stop = (on + 0) % 86400; padded interval is 0, so stop is on mod day.
+    assert result["stop"] == result["on"] % 86400
+    assert len(result) == 9
 
 
 def test_modbus_regs_to_hex_string_basic():
@@ -468,3 +485,263 @@ def test_get_machine_name_non_generic_ignores_custom_name():
         "MBF_PAR_UICFG_MACH_NAME_LIGHT": "else",
     }
     assert get_machine_name(data) == "Hay"
+
+
+# ---------------------------------------------------------------------------
+# combine_u32
+# ---------------------------------------------------------------------------
+
+
+def test_combine_u32_combines_low_and_high_words():
+    """combine_u32 returns (high << 16) | low."""
+    assert combine_u32(0x1234, 0x5678) == 0x56781234
+
+
+def test_combine_u32_handles_zero_values():
+    """Both halves at 0 -> 0; not None."""
+    assert combine_u32(0, 0) == 0
+
+
+def test_combine_u32_handles_max_32bit():
+    """0xFFFF / 0xFFFF -> 0xFFFFFFFF (full 32-bit range)."""
+    assert combine_u32(0xFFFF, 0xFFFF) == 0xFFFFFFFF
+
+
+@pytest.mark.parametrize(
+    ("low", "high"),
+    [
+        (None, None),
+        (1, None),
+        (None, 1),
+    ],
+)
+def test_combine_u32_missing_or_none_returns_none(low, high):
+    """Either half being None yields None."""
+    assert combine_u32(low, high) is None
+
+
+# ---------------------------------------------------------------------------
+# decode_par_model_modules
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("bitmask", "expected"),
+    [
+        (0x0001, ["ionization"]),
+        (0x0002, ["hydrolysis"]),
+        (0x0004, ["uv_lamp"]),
+        (0x0008, ["salinity"]),
+        (0x000F, ["ionization", "hydrolysis", "uv_lamp", "salinity"]),
+        (0x000A, ["hydrolysis", "salinity"]),
+        (0x0000, []),
+        (None, []),
+        # Unknown bits above the documented mask must not introduce phantom names.
+        (0x0010, []),
+    ],
+)
+def test_decode_par_model_modules(bitmask, expected):
+    assert decode_par_model_modules(bitmask) == expected
+
+
+# ---------------------------------------------------------------------------
+# filtration_mode codec
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reg_val", "expected"),
+    [
+        (0, "manual"),
+        (1, "auto"),
+        (2, "heating"),
+        (3, "smart"),
+        (4, "intelligent"),
+        (13, "backwash"),
+        (None, None),
+        (5, None),
+        (99, None),
+    ],
+)
+def test_decode_filtration_mode(reg_val, expected):
+    assert decode_filtration_mode(reg_val) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("manual", 0),
+        ("auto", 1),
+        ("heating", 2),
+        ("smart", 3),
+        ("intelligent", 4),
+        ("backwash", 13),
+    ],
+)
+def test_encode_filtration_mode(name, expected):
+    assert encode_filtration_mode(name) == expected
+
+
+def test_encode_filtration_mode_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown filtration mode"):
+        encode_filtration_mode("nonsense")
+
+
+# ---------------------------------------------------------------------------
+# cell_boost codec
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reg_val", "expected"),
+    [
+        (0x0000, "inactive"),
+        (0x85A0, "active"),
+        (0x05A0, "active_with_redox"),
+        # any value with bit 0x8000 set decodes as "active" (no-redox variant)
+        (0x8000, "active"),
+        (0x8001, "active"),
+        # missing input returns None
+        (None, None),
+        # unrecognised non-zero pattern returns None
+        (0x0100, None),
+    ],
+)
+def test_decode_cell_boost(reg_val, expected):
+    assert decode_cell_boost(reg_val) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("inactive", 0),
+        ("active", 0x85A0),
+        ("active_with_redox", 0x05A0),
+    ],
+)
+def test_encode_cell_boost(name, expected):
+    assert encode_cell_boost(name) == expected
+
+
+def test_encode_cell_boost_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown cell-boost mode"):
+        encode_cell_boost("foo")
+
+
+def test_cell_boost_round_trip():
+    """encode -> decode round trips for every public mode."""
+    for name in ("inactive", "active", "active_with_redox"):
+        assert decode_cell_boost(encode_cell_boost(name)) == name
+
+
+# ---------------------------------------------------------------------------
+# filtration_speed codec
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("idx", "expected"),
+    [
+        (0, "low"),
+        (1, "mid"),
+        (2, "high"),
+        (None, None),
+        (3, None),
+    ],
+)
+def test_decode_filtration_speed(idx, expected):
+    assert decode_filtration_speed(idx) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("low", 0), ("mid", 1), ("high", 2)],
+)
+def test_encode_filtration_speed(name, expected):
+    assert encode_filtration_speed(name) == expected
+
+
+def test_encode_filtration_speed_rejects_off():
+    """``off`` is not encodable -- it lives in filt_mode / manual_state."""
+    with pytest.raises(ValueError, match="unknown filtration speed"):
+        encode_filtration_speed("off")
+
+
+def test_encode_filtration_speed_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown filtration speed"):
+        encode_filtration_speed("turbo")
+
+
+# ---------------------------------------------------------------------------
+# derive_timer_stop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("on", "interval", "expected"),
+    [
+        # Same-day stop
+        (3600, 7200, 10800),
+        # Stop at midnight wraps cleanly to 0 (the modulo)
+        (86000, 400, 0),
+        # Over-midnight wrap: 85000 + 5000 = 90000 -> 90000 - 86400 = 3600
+        (85000, 5000, 3600),
+        # Boundary: zero interval keeps the start time
+        (3600, 0, 3600),
+        # Either input missing -> None
+        (None, 100, None),
+        (100, None, None),
+        (None, None, None),
+    ],
+)
+def test_derive_timer_stop(on, interval, expected):
+    assert derive_timer_stop(on, interval) == expected
+
+
+# ---------------------------------------------------------------------------
+# aggregate_filtration_remaining
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_filtration_remaining_returns_largest_positive():
+    """The aggregate is the max of the three positive countdowns."""
+    data = {
+        "filtration1_countdown": 1200,
+        "filtration2_countdown": 3600,
+        "filtration3_countdown": 600,
+    }
+    assert aggregate_filtration_remaining(data) == 3600
+
+
+def test_aggregate_filtration_remaining_ignores_non_positive():
+    """Zero, negative or missing countdowns are ignored."""
+    data = {
+        "filtration1_countdown": 0,
+        "filtration2_countdown": 1500,
+        # filtration3_countdown missing
+    }
+    assert aggregate_filtration_remaining(data) == 1500
+
+
+def test_aggregate_filtration_remaining_all_inactive_returns_none():
+    """No active timers -> None (so the integration knows there is no remaining time)."""
+    data = {
+        "filtration1_countdown": 0,
+        "filtration2_countdown": None,
+        "filtration3_countdown": -1,
+    }
+    assert aggregate_filtration_remaining(data) is None
+
+
+def test_aggregate_filtration_remaining_empty_data_returns_none():
+    assert aggregate_filtration_remaining({}) is None
+
+
+def test_aggregate_filtration_remaining_ignores_other_keys():
+    """Keys outside the three filtration timers must not contribute."""
+    data = {
+        "filtration1_countdown": 100,
+        "filtration4_countdown": 9999,  # nonexistent timer index
+        "relay_aux1_countdown": 9999,
+    }
+    assert aggregate_filtration_remaining(data) == 100

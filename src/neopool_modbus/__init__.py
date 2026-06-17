@@ -19,11 +19,12 @@ the public exception hierarchy, and the :func:`async_probe_serial` one-shot
 helper.  Lower-level helpers are intentionally kept in submodules to keep
 the public surface small:
 
-- :mod:`neopool_modbus.registers`   - register addresses, bit masks, timer block layouts
-- :mod:`neopool_modbus.decoders`    - register-value parsers and timer helpers
-- :mod:`neopool_modbus.status_mask` - status register bit decoders
-- :mod:`neopool_modbus.exceptions`  - exception hierarchy
-- :mod:`neopool_modbus.probe`       - one-shot probes (e.g. read serial)
+- :mod:`neopool_modbus.registers`    - register addresses, bit masks, timer block layouts
+- :mod:`neopool_modbus.decoders`     - register-value parsers and timer helpers
+- :mod:`neopool_modbus.capabilities` - module-presence predicates over a data snapshot
+- :mod:`neopool_modbus.status_mask`  - status register bit decoders
+- :mod:`neopool_modbus.exceptions`   - exception hierarchy
+- :mod:`neopool_modbus.probe`        - one-shot probes (e.g. read serial)
 """
 
 from __future__ import annotations

@@ -27,6 +27,13 @@ from pymodbus.framer import FramerType
 
 from .decoders import (
     build_timer_block,
+    combine_u32,
+    decode_cell_boost,
+    decode_filtration_mode,
+    decode_par_model_modules,
+    encode_cell_boost,
+    encode_filtration_mode,
+    encode_filtration_speed,
     get_filtration_speed,
     modbus_regs_to_ascii,
     parse_timer_block,
@@ -38,11 +45,22 @@ from .exceptions import (
     NeoPoolTimeoutError,
 )
 from .registers import (
+    CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
+    COPY_TO_RTC_REGISTER,
     DEFAULT_MODBUS_FRAMER,
+    DEVICE_TIME_REGISTER,
     EEPROM_SAVE_REGISTER,
+    ESCAPE_REGISTER,
     EXEC_REGISTER,
+    FILTRATION_CONF_REGISTER,
+    FILTRATION_MODE_REGISTER,
+    FILTRATION_SPEED_MASK,
+    FILTRATION_SPEED_SHIFT,
+    HEATING_SETPOINT_REGISTER,
+    INTELLIGENT_SETPOINT_REGISTER,
     MAX_REGISTERS_PER_READ,
+    RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
     is_input_register,
     is_valid_relay_gpio,
@@ -76,6 +94,55 @@ _NOTIF_MISC = 0x0020  # MBMSK_NOTIF_MISC_CHANGED
 # Safety: force a full register read every N polls so that devices which do not
 # correctly implement the NOTIFICATION register still get periodic refreshes.
 _FULL_READ_INTERVAL = 60
+
+# 32-bit counters the firmware exposes as two adjacent 16-bit registers. After
+# every read we collapse each pair into a single combined entry and drop the
+# halves so consumers never have to recombine them by hand.
+_U32_REGISTER_PAIRS: tuple[tuple[str, str, str], ...] = (
+    # (combined_key, low_key, high_key)
+    ("MBF_CELL_RUNTIME", "MBF_CELL_RUNTIME_LOW", "MBF_CELL_RUNTIME_HIGH"),
+    (
+        "MBF_CELL_RUNTIME_PART",
+        "MBF_CELL_RUNTIME_PART_LOW",
+        "MBF_CELL_RUNTIME_PART_HIGH",
+    ),
+    (
+        "MBF_CELL_RUNTIME_POLA",
+        "MBF_CELL_RUNTIME_POLA_LOW",
+        "MBF_CELL_RUNTIME_POLA_HIGH",
+    ),
+    (
+        "MBF_CELL_RUNTIME_POLB",
+        "MBF_CELL_RUNTIME_POLB_LOW",
+        "MBF_CELL_RUNTIME_POLB_HIGH",
+    ),
+    (
+        "MBF_CELL_RUNTIME_POL_CHANGES",
+        "MBF_CELL_RUNTIME_POL_CHANGES_LOW",
+        "MBF_CELL_RUNTIME_POL_CHANGES_HIGH",
+    ),
+    ("MBF_PAR_TIME", "MBF_PAR_TIME_LOW", "MBF_PAR_TIME_HIGH"),
+    (
+        "MBF_PAR_FILTERING_TIME",
+        "MBF_PAR_FILTERING_TIME_LOW",
+        "MBF_PAR_FILTERING_TIME_HIGH",
+    ),
+    (
+        "MBF_PAR_INTELLIGENT_INTERVAL_TIME",
+        "MBF_PAR_INTELLIGENT_INTERVAL_TIME_LOW",
+        "MBF_PAR_INTELLIGENT_INTERVAL_TIME_HIGH",
+    ),
+)
+
+
+def _collapse_u32_register_pairs(result: dict[str, Any]) -> None:
+    """Replace each known LOW/HIGH register pair with a single combined entry."""
+    for combined, low_key, high_key in _U32_REGISTER_PAIRS:
+        low = result.pop(low_key, None)
+        high = result.pop(high_key, None)
+        value = combine_u32(low, high)
+        if value is not None:
+            result[combined] = value
 
 
 class NeoPoolModbusClient:
@@ -1072,6 +1139,18 @@ class NeoPoolModbusClient:
         # Add filtration speed and type
         result["FILTRATION_SPEED"] = get_filtration_speed(result)
 
+        _collapse_u32_register_pairs(result)
+
+        # High-level decoded views over raw registers; integrations should
+        # prefer these and treat the *MBF_* keys as wire-level detail.
+        result["filtration_mode"] = decode_filtration_mode(
+            result.get("MBF_PAR_FILT_MODE")
+        )
+        result["cell_boost_mode"] = decode_cell_boost(result.get("MBF_CELL_BOOST"))
+        result["installed_modules"] = decode_par_model_modules(
+            result.get("MBF_PAR_MODEL")
+        )
+
         # Update cache after fixup and derived fields so partial reads
         # start from consistent values including derived flags.
         self._cached_result.update(result)
@@ -1093,6 +1172,99 @@ class NeoPoolModbusClient:
                 await self._safe_close_client()
                 self._client = None
             raise
+
+    async def async_set_filtration_mode(
+        self, mode: str, apply: bool = True
+    ) -> dict[str, Any] | None:
+        """Set the filtration mode (manual / auto / heating / smart / intelligent / backwash).
+
+        ``apply`` defaults to True to persist the new mode to EEPROM and
+        restart the affected modules; pass False for a volatile change.
+        """
+        return await self.async_write_register(
+            FILTRATION_MODE_REGISTER, encode_filtration_mode(mode), apply=apply
+        )
+
+    async def async_set_cell_boost(
+        self, mode: str, apply: bool = True
+    ) -> dict[str, Any] | None:
+        """Set the cell boost mode (inactive / active / active_with_redox).
+
+        ``apply`` defaults to True; pass False for a volatile change.
+        """
+        return await self.async_write_register(
+            CELL_BOOST_REGISTER, encode_cell_boost(mode), apply=apply
+        )
+
+    async def async_set_filtration_speed(
+        self, speed: str, apply: bool = False
+    ) -> dict[str, Any] | None:
+        """Set the filtration pump speed (low / mid / high).
+
+        RMW on bits 4-6 of MBF_PAR_FILTRATION_CONF; uses the cached value
+        from the last :meth:`async_read_all` when available, else reads it
+        fresh and waits 100 ms before the write. ``apply`` defaults to
+        False since speed selects can flip frequently and forcing an
+        EEPROM save + EXEC after each change wears the controller; pass
+        True when the new value must survive a restart.
+        """
+        encoded = encode_filtration_speed(speed)
+        current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
+        if current is None:
+            regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
+            current = regs[0]
+            await asyncio.sleep(0.1)
+        new_value = (current & ~FILTRATION_SPEED_MASK) | (
+            encoded << FILTRATION_SPEED_SHIFT
+        )
+        return await self.async_write_register(
+            FILTRATION_CONF_REGISTER, new_value, apply=apply
+        )
+
+    async def async_clear_errors(self) -> dict[str, Any] | None:
+        """Clear all device error messages (writes 1 to MBF_ESCAPE)."""
+        return await self.async_write_register(ESCAPE_REGISTER, 1)
+
+    async def async_save_to_eeprom(self) -> dict[str, Any] | None:
+        """Persist the current configuration to EEPROM (MBF_SAVE_TO_EEPROM)."""
+        return await self.async_write_register(EEPROM_SAVE_REGISTER, 1)
+
+    async def async_reset_user_counters(self) -> dict[str, Any] | None:
+        """Reset the user-level counters (cell partial runtime, ION/UV partial work-time).
+
+        The reset is volatile, so this method follows up with a write to
+        MBF_SAVE_TO_EEPROM to make it persistent. Returns the result of
+        the EEPROM-save write.
+        """
+        await self.async_write_register(RESET_USER_COUNTERS_REGISTER, 1)
+        return await self.async_write_register(EEPROM_SAVE_REGISTER, 1)
+
+    async def async_sync_device_time(
+        self, low: int, high: int
+    ) -> dict[str, Any] | None:
+        """Sync the device RTC.
+
+        Writes [low, high] to MBF_PAR_TIME (0x0408) and then triggers
+        MBF_ACTION_COPY_TO_RTC (0x04F0). Caller supplies the 16-bit halves
+        of the desired Unix timestamp.
+        """
+        await self.async_write_register(DEVICE_TIME_REGISTER, [low, high])
+        return await self.async_write_register(COPY_TO_RTC_REGISTER, 1)
+
+    async def async_set_temp_setpoint(
+        self, raw: int, apply: bool = True
+    ) -> dict[str, Any] | None:
+        """Set the heating + intelligent target temperatures to *raw*.
+
+        Both setpoints share a single UI control in the integration, so
+        the values are written sequentially to keep them in sync. *raw*
+        is the already-scaled register value (e.g. 250 for 25.0 °C).
+        ``apply`` defaults to True; pass False for a volatile change.
+        """
+        await self.async_write_register(HEATING_SETPOINT_REGISTER, raw)
+        return await self.async_write_register(
+            INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
+        )
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:
