@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2](https://github.com/svasek/python-neopool-modbus/compare/v3.1.1...v3.1.2) (2026-06-17)
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🩹 async_sync_device_time takes a unix timestamp ([08cadb5](https://github.com/svasek/python-neopool-modbus/commit/08cadb538abd1bd671298677fbe7f7e4af1a8c97))
+
 ## [3.1.1](https://github.com/svasek/python-neopool-modbus/compare/v3.1.0...v3.1.1) (2026-06-17)
 
 
