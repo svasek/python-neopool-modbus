@@ -507,6 +507,14 @@ async def test_perform_read_all_happy_path(config, monkeypatch):
     # lower 4 bits: 0xC580 & 0x000F = 0
     assert result["MBF_PH_STATUS_ALARM"] == 0
 
+    # Decoded high-level views over raw registers (commit 11):
+    # MBF_PAR_FILT_MODE=10 is unmapped -> None
+    # MBF_CELL_BOOST=0x85A0 -> NO_REDOX bit set -> "active"
+    # MBF_PAR_MODEL=0x0002 -> bit 1 (HIDROLYSIS) -> ["hydrolysis"]
+    assert result["filtration_mode"] is None
+    assert result["cell_boost_mode"] == "active"
+    assert result["installed_modules"] == ["hydrolysis"]
+
     # Verify that all Modbus calls were made as expected
     assert fake_modbus.read_holding_registers.await_count == 10
     assert fake_modbus.read_input_registers.await_count == 1

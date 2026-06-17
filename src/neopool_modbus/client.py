@@ -28,6 +28,9 @@ from pymodbus.framer import FramerType
 from .decoders import (
     build_timer_block,
     combine_u32,
+    decode_cell_boost,
+    decode_filtration_mode,
+    decode_par_model_modules,
     get_filtration_speed,
     modbus_regs_to_ascii,
     parse_timer_block,
@@ -1123,6 +1126,16 @@ class NeoPoolModbusClient:
         result["FILTRATION_SPEED"] = get_filtration_speed(result)
 
         _collapse_u32_register_pairs(result)
+
+        # High-level decoded views over raw registers; integrations should
+        # prefer these and treat the *MBF_* keys as wire-level detail.
+        result["filtration_mode"] = decode_filtration_mode(
+            result.get("MBF_PAR_FILT_MODE")
+        )
+        result["cell_boost_mode"] = decode_cell_boost(result.get("MBF_CELL_BOOST"))
+        result["installed_modules"] = decode_par_model_modules(
+            result.get("MBF_PAR_MODEL")
+        )
 
         # Update cache after fixup and derived fields so partial reads
         # start from consistent values including derived flags.
