@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0](https://github.com/svasek/python-neopool-modbus/compare/v2.2.0...v3.0.0) (2026-06-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* `async_read_all()` returns 32-bit register pairs as single combined keys instead of the `_LOW`/`_HIGH` halves.
+
+### ✨ Features
+
+* ✨ tier-1 extraction of integration logic into the library ([#18](https://github.com/svasek/python-neopool-modbus/issues/18)) ([94f2934](https://github.com/svasek/python-neopool-modbus/commit/94f293458fb8acdd2a5d2fe5d87691bec0396730))
+
 ## [2.2.0](https://github.com/svasek/python-neopool-modbus/compare/v2.1.1...v2.2.0) (2026-06-16)
 
 

@@ -38,7 +38,7 @@ from .exceptions import (
 )
 from .probe import async_probe_serial
 
-__version__ = "2.2.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "NeoPoolConnectionError",
