@@ -217,18 +217,24 @@ The client exposes named operations for the writes integrations
 typically need, so callers do not have to reach for raw register
 addresses:
 
-| Method                             | Effect                                                                                |
-| ---------------------------------- | ------------------------------------------------------------------------------------- |
-| `async_set_filtration_mode(name)`  | manual / auto / heating / smart / intelligent / backwash                              |
-| `async_set_cell_boost(name)`       | inactive / active / active_with_redox                                                 |
-| `async_set_filtration_speed(name)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
-| `async_set_temp_setpoint(raw)`     | writes the same scaled value to heating + intelligent registers in sync                |
-| `async_clear_errors()`             | one-shot to `MBF_ESCAPE`                                                              |
-| `async_save_to_eeprom()`           | one-shot to `MBF_SAVE_TO_EEPROM`                                                      |
-| `async_reset_user_counters()`      | resets user counters and chains the EEPROM save (the reset is volatile)                |
-| `async_sync_device_time(low, high)`| writes the two halves of `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`         |
+| Method                                         | Effect                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `async_set_filtration_mode(name, apply=True)`  | manual / auto / heating / smart / intelligent / backwash                              |
+| `async_set_cell_boost(name, apply=True)`       | inactive / active / active_with_redox                                                 |
+| `async_set_filtration_speed(name, apply=False)`| low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
+| `async_set_temp_setpoint(raw, apply=True)`     | writes the same scaled value to heating + intelligent registers in sync                |
+| `async_clear_errors()`                         | one-shot to `MBF_ESCAPE`                                                              |
+| `async_save_to_eeprom()`                       | one-shot to `MBF_SAVE_TO_EEPROM`                                                      |
+| `async_reset_user_counters()`                  | resets user counters and chains the EEPROM save (the reset is volatile)                |
+| `async_sync_device_time(low, high)`            | writes the two halves of `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`         |
 
 Unknown mode/speed names raise `ValueError` before any I/O happens.
+
+`apply` controls whether the write triggers an EEPROM save + EXEC after
+the value lands. The defaults match the operation's typical use: the
+filtration mode, cell boost and temperature setpoint persist by
+default; the filtration speed select stays volatile so frequent UI
+adjustments do not wear the controller's EEPROM.
 
 All client methods translate underlying pymodbus exceptions into the
 `NeoPoolError` hierarchy at the library boundary, so callers never need

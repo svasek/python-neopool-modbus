@@ -162,9 +162,9 @@ def available_filtration_modes(data: dict[str, Any]) -> tuple[str, ...]:
 def available_filtration_speeds(data: dict[str, Any]) -> tuple[str, ...]:
     """Return the speeds offered by a variable-speed filtration pump.
 
-    Empty when the configured pump is single-speed. ``off`` is a valid wire
-    value but is not surfaced as a select option since stopping the pump is
-    typically driven by the filtration mode rather than the speed select.
+    Empty when the configured pump is single-speed. Stopping the pump is
+    driven by the filtration mode or the manual filtration-state
+    register, not by this select.
     """
     if not has_variable_speed_pump(data):
         return ()

@@ -2987,6 +2987,17 @@ async def test_async_set_filtration_mode_rejects_unknown(config):
 
 
 @pytest.mark.asyncio
+async def test_async_set_filtration_mode_apply_override(config):
+    """apply=False keeps the change volatile (no EEPROM save)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    await client.async_set_filtration_mode("smart", apply=False)
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_MODE_REGISTER, 3, apply=False
+    )
+
+
+@pytest.mark.asyncio
 async def test_async_set_cell_boost_writes_encoded_value(config):
     """active_with_redox encodes to MBMSK_CELL_BOOST_ACTIVE (0x05A0)."""
     client = neopool_modbus.NeoPoolModbusClient(config)
@@ -3008,6 +3019,17 @@ async def test_async_set_cell_boost_rejects_unknown(config):
 
 
 @pytest.mark.asyncio
+async def test_async_set_cell_boost_apply_override(config):
+    """apply=False keeps the change volatile (no EEPROM save)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    await client.async_set_cell_boost("inactive", apply=False)
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.CELL_BOOST_REGISTER, 0, apply=False
+    )
+
+
+@pytest.mark.asyncio
 async def test_async_set_filtration_speed_uses_cache_when_available(config):
     """Hot path: read MBF_PAR_FILTRATION_CONF from the cache, no extra read."""
     client = neopool_modbus.NeoPoolModbusClient(config)
@@ -3021,9 +3043,10 @@ async def test_async_set_filtration_speed_uses_cache_when_available(config):
 
     assert result == {"ok": True}
     client.async_read_register.assert_not_awaited()
-    # Expected: 0x8001 with bits 4-6 replaced by 2 (high) -> 0x8021
+    # Expected: 0x8001 with bits 4-6 replaced by 2 (high) -> 0x8021.
+    # Default apply=False so the speed change stays volatile.
     client.async_write_register.assert_awaited_once_with(
-        neopool_modbus.FILTRATION_CONF_REGISTER, 0x8021, apply=True
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x8021, apply=False
     )
 
 
@@ -3049,9 +3072,24 @@ async def test_async_set_filtration_speed_falls_back_to_modbus_read(config):
     )
     # Settle delay between the read and the write.
     assert sleeps == [0.1]
-    # Expected: 0x0021 -> mask off 0x70 -> 0x0001 -> OR (0 << 4) = 0x0001
+    # Expected: 0x0021 -> mask off 0x70 -> 0x0001 -> OR (0 << 4) = 0x0001.
     client.async_write_register.assert_awaited_once_with(
-        neopool_modbus.FILTRATION_CONF_REGISTER, 0x0001, apply=True
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x0001, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtration_speed_apply_override(config):
+    """Caller can opt in to EEPROM persistence with apply=True."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {"MBF_PAR_FILTRATION_CONF": 0x0001}
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_set_filtration_speed("mid", apply=True)
+
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x0011, apply=True
     )
 
 
@@ -3139,4 +3177,18 @@ async def test_async_set_temp_setpoint_writes_both_registers(config):
     assert client.async_write_register.await_args_list == [
         call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
         call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_set_temp_setpoint_apply_override(config):
+    """apply=False keeps the change volatile (no EEPROM save)."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    await client.async_set_temp_setpoint(250, apply=False)
+    assert client.async_write_register.await_args_list == [
+        call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
+        call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=False),
     ]

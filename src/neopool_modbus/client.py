@@ -1173,24 +1173,40 @@ class NeoPoolModbusClient:
                 self._client = None
             raise
 
-    async def async_set_filtration_mode(self, mode: str) -> dict[str, Any] | None:
-        """Set the filtration mode (manual / auto / heating / smart / intelligent / backwash)."""
+    async def async_set_filtration_mode(
+        self, mode: str, apply: bool = True
+    ) -> dict[str, Any] | None:
+        """Set the filtration mode (manual / auto / heating / smart / intelligent / backwash).
+
+        ``apply`` defaults to True to persist the new mode to EEPROM and
+        restart the affected modules; pass False for a volatile change.
+        """
         return await self.async_write_register(
-            FILTRATION_MODE_REGISTER, encode_filtration_mode(mode), apply=True
+            FILTRATION_MODE_REGISTER, encode_filtration_mode(mode), apply=apply
         )
 
-    async def async_set_cell_boost(self, mode: str) -> dict[str, Any] | None:
-        """Set the cell boost mode (inactive / active / active_with_redox)."""
+    async def async_set_cell_boost(
+        self, mode: str, apply: bool = True
+    ) -> dict[str, Any] | None:
+        """Set the cell boost mode (inactive / active / active_with_redox).
+
+        ``apply`` defaults to True; pass False for a volatile change.
+        """
         return await self.async_write_register(
-            CELL_BOOST_REGISTER, encode_cell_boost(mode), apply=True
+            CELL_BOOST_REGISTER, encode_cell_boost(mode), apply=apply
         )
 
-    async def async_set_filtration_speed(self, speed: str) -> dict[str, Any] | None:
+    async def async_set_filtration_speed(
+        self, speed: str, apply: bool = False
+    ) -> dict[str, Any] | None:
         """Set the filtration pump speed (low / mid / high).
 
         RMW on bits 4-6 of MBF_PAR_FILTRATION_CONF; uses the cached value
         from the last :meth:`async_read_all` when available, else reads it
-        fresh and waits 100 ms before the write.
+        fresh and waits 100 ms before the write. ``apply`` defaults to
+        False since speed selects can flip frequently and forcing an
+        EEPROM save + EXEC after each change wears the controller; pass
+        True when the new value must survive a restart.
         """
         encoded = encode_filtration_speed(speed)
         current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
@@ -1202,7 +1218,7 @@ class NeoPoolModbusClient:
             encoded << FILTRATION_SPEED_SHIFT
         )
         return await self.async_write_register(
-            FILTRATION_CONF_REGISTER, new_value, apply=True
+            FILTRATION_CONF_REGISTER, new_value, apply=apply
         )
 
     async def async_clear_errors(self) -> dict[str, Any] | None:
@@ -1235,16 +1251,19 @@ class NeoPoolModbusClient:
         await self.async_write_register(DEVICE_TIME_REGISTER, [low, high])
         return await self.async_write_register(COPY_TO_RTC_REGISTER, 1)
 
-    async def async_set_temp_setpoint(self, raw: int) -> dict[str, Any] | None:
+    async def async_set_temp_setpoint(
+        self, raw: int, apply: bool = True
+    ) -> dict[str, Any] | None:
         """Set the heating + intelligent target temperatures to *raw*.
 
         Both setpoints share a single UI control in the integration, so
         the values are written sequentially to keep them in sync. *raw*
         is the already-scaled register value (e.g. 250 for 25.0 °C).
+        ``apply`` defaults to True; pass False for a volatile change.
         """
         await self.async_write_register(HEATING_SETPOINT_REGISTER, raw)
         return await self.async_write_register(
-            INTELLIGENT_SETPOINT_REGISTER, raw, apply=True
+            INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
         )
 
     def _calculate_avg_response_time(self) -> float | None:
