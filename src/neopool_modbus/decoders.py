@@ -421,6 +421,70 @@ def is_hydrolysis_in_percent(data: dict[str, Any]) -> bool:
     return True
 
 
+def decode_hidro_polarity(data: dict[str, Any]) -> str | None:
+    """Decode hydrolysis cell polarity state from coordinator data snapshot."""
+    pol1 = data.get("HIDRO in Pol1")
+    pol2 = data.get("HIDRO in Pol2")
+    dead = data.get("HIDRO in dead time")
+    if pol1 is None and pol2 is None and dead is None:
+        return None
+    filtration = data.get("Filtration Pump")
+    if filtration is not None and filtration is False:
+        return "off"
+    fl1 = data.get("HIDRO Cell Flow FL1")
+    if filtration is True and fl1 is False:
+        return "no_flow"
+    if dead:
+        return "dead_time"
+    if pol1:
+        return "pol1"
+    if pol2:
+        return "pol2"
+    return "off"
+
+
+def decode_ion_polarity(data: dict[str, Any]) -> str | None:
+    """Decode ionizer cell polarity state from coordinator data snapshot."""
+    pol1 = data.get("ION in Pol1")
+    pol2 = data.get("ION in Pol2")
+    dead = data.get("ION in dead time")
+    if pol1 is None and pol2 is None and dead is None:
+        return None
+    if dead:
+        return "dead_time"
+    if pol1:
+        return "pol1"
+    if pol2:
+        return "pol2"
+    return "off"
+
+
+def decode_ph_pump_status(data: dict[str, Any]) -> str | None:
+    """Decode pH pump operational status from coordinator data snapshot."""
+    ctrl = data.get("pH control module")
+    acid_bit = data.get("pH acid pump active")
+    pump_bit = data.get("pH pump active")
+    if ctrl is None and acid_bit is None and pump_bit is None:
+        return None
+    if ctrl is None:
+        return None
+    if not ctrl:
+        return "off"
+    # MBF_PAR_RELAY_PH: 0=acid+base, 1=acid only, 2=base only
+    relay_ph = data.get("MBF_PAR_RELAY_PH", 0) or 0
+    if relay_ph == 1:
+        return "acid" if pump_bit else "idle"
+    if relay_ph == 2:
+        return "base" if pump_bit else "idle"
+    if acid_bit and pump_bit:
+        return "both"
+    if acid_bit:
+        return "acid"
+    if pump_bit:
+        return "base"
+    return "idle"
+
+
 __all__ = [
     "aggregate_filtration_remaining",
     "build_timer_block",
@@ -429,7 +493,10 @@ __all__ = [
     "decode_cell_boost",
     "decode_filtration_mode",
     "decode_filtration_speed",
+    "decode_hidro_polarity",
+    "decode_ion_polarity",
     "decode_par_model_modules",
+    "decode_ph_pump_status",
     "derive_timer_stop",
     "encode_cell_boost",
     "encode_filtration_mode",
