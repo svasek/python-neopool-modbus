@@ -502,7 +502,7 @@ async def test_perform_read_all_happy_path(config, monkeypatch):
     assert result["MBF_HIDRO_VOLTAGE"] == pytest.approx(5.2)
     assert "MBF_PAR_PH1" in result
     assert result["MBF_PAR_PH1"] == 7.5
-    assert "FILTRATION_SPEED" in result
+    assert "filtration_speed_state" in result
     # MBF_PH_STATUS_ALARM derived from MBF_PH_STATUS (reg01[7]=50560=0xC580)
     # lower 4 bits: 0xC580 & 0x000F = 0
     assert result["MBF_PH_STATUS_ALARM"] == 0

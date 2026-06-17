@@ -19,6 +19,7 @@ from neopool_modbus.decoders import (
     aggregate_filtration_remaining,
     build_timer_block,
     combine_u32,
+    compute_filtration_speed_state,
     decode_cell_boost,
     decode_filtration_mode,
     decode_filtration_speed,
@@ -29,7 +30,6 @@ from neopool_modbus.decoders import (
     encode_filtration_speed,
     generate_time_options,
     get_filtration_pump_type,
-    get_filtration_speed,
     get_machine_name,
     get_timer_interval,
     hhmm_to_seconds,
@@ -64,110 +64,109 @@ def test_build_timer_block():
     assert isinstance(regs, list) and len(regs) == 15
 
 
-def test_get_filtration_speed_mid():
+def test_compute_filtration_speed_state_mid():
     d = {
         "MBF_RELAY_STATE": 0x0202,
         "MBF_PAR_FILTRATION_CONF": 0x0000,
         "Filtration Pump": True,
     }
-    # relay_speed == 2 → Mid
-    assert get_filtration_speed(d) == 2
+    # relay_speed == 2 → mid
+    assert compute_filtration_speed_state(d) == "mid"
 
 
-def test_get_filtration_speed_high():
+def test_compute_filtration_speed_state_high():
     d = {
         "MBF_RELAY_STATE": 0x0402,
         "MBF_PAR_FILTRATION_CONF": 0x0000,
         "Filtration Pump": True,
     }
-    # relay_speed == 4 → High
-    assert get_filtration_speed(d) == 3
+    # relay_speed == 4 → high
+    assert compute_filtration_speed_state(d) == "high"
 
 
-def test_get_filtration_speed_conf_speed_0():
+def test_compute_filtration_speed_state_conf_speed_0():
     d = {
         "MBF_RELAY_STATE": 0x0002,
         "MBF_PAR_FILTRATION_CONF": 0x0000,
         "Filtration Pump": True,
     }
-    assert get_filtration_speed(d) == 1
+    assert compute_filtration_speed_state(d) == "low"
 
 
-def test_get_filtration_speed_conf_speed_1():
+def test_compute_filtration_speed_state_conf_speed_1():
     d = {
         "MBF_RELAY_STATE": 0x0002,
         "MBF_PAR_FILTRATION_CONF": 0x0010,
         "Filtration Pump": True,
     }
-    assert get_filtration_speed(d) == 2
+    assert compute_filtration_speed_state(d) == "mid"
 
 
-def test_get_filtration_speed_conf_speed_2():
+def test_compute_filtration_speed_state_conf_speed_2():
     d = {
         "MBF_RELAY_STATE": 0x0002,
         "MBF_PAR_FILTRATION_CONF": 0x0020,
         "Filtration Pump": True,
     }
-    assert get_filtration_speed(d) == 3
+    assert compute_filtration_speed_state(d) == "high"
 
 
-def test_get_filtration_speed_relay_speed_1():
+def test_compute_filtration_speed_state_relay_speed_1():
     d = {
         "MBF_RELAY_STATE": 0x0102,
         "MBF_PAR_FILTRATION_CONF": 0x0000,
         "Filtration Pump": True,
     }
-    # relay_speed == 1, should return 1 (Low)
-    assert get_filtration_speed(d) == 1
+    assert compute_filtration_speed_state(d) == "low"
 
 
 @pytest.mark.parametrize(
     ("relay_state", "expected"),
     [
-        (0x0302, 2),  # cumulative mid: bits 8+9 → relay_speed 0x03
-        (0x0702, 3),  # cumulative high: bits 8+9+10 → relay_speed 0x07
+        (0x0302, "mid"),  # cumulative mid: bits 8+9 → relay_speed 0x03
+        (0x0702, "high"),  # cumulative high: bits 8+9+10 → relay_speed 0x07
     ],
     ids=["cumulative-mid", "cumulative-high"],
 )
-def test_get_filtration_speed_cumulative_encoding(relay_state, expected):
+def test_compute_filtration_speed_state_cumulative_encoding(relay_state, expected):
     """Controllers using cumulative (thermometer) speed bits (#152)."""
     d = {
         "MBF_RELAY_STATE": relay_state,
         "MBF_PAR_FILTRATION_CONF": 0x0020,  # conf says high - must be ignored
         "Filtration Pump": True,
     }
-    assert get_filtration_speed(d) == expected
+    assert compute_filtration_speed_state(d) == expected
 
 
 @pytest.mark.parametrize("aux_bit", [0x0010, 0x0020, 0x0040])
-def test_get_filtration_speed_aux_bits_do_not_affect_speed(aux_bit):
+def test_compute_filtration_speed_state_aux_bits_do_not_affect_speed(aux_bit):
     # filtration ON (0x0002), speed MID (0x0200), plus AUX relay bit set
     d = {
         "MBF_RELAY_STATE": 0x0202 | aux_bit,
         "MBF_PAR_FILTRATION_CONF": 0x0000,
         "Filtration Pump": True,
     }
-    assert get_filtration_speed(d) == 2
+    assert compute_filtration_speed_state(d) == "mid"
 
 
-def test_get_filtration_speed_no_match():
+def test_compute_filtration_speed_state_no_match():
     d = {
         "MBF_RELAY_STATE": 0x0002,
         "MBF_PAR_FILTRATION_CONF": 0x00F0,
         "Filtration Pump": True,
     }
-    # relay_speed == 0, conf_speed == 15 (not 0,1,2) → default 0
-    assert get_filtration_speed(d) == 0
+    # relay_speed == 0, conf_speed == 15 (not 0,1,2) → "off"
+    assert compute_filtration_speed_state(d) == "off"
 
 
-def test_get_filtration_speed_none():
-    # Empty dict: "Filtration Pump" is None (not yet decoded) → treated as off.
-    assert get_filtration_speed({}) == 0
+def test_compute_filtration_speed_state_none():
+    # Empty dict: "Filtration Pump" is None (not yet decoded) → "off".
+    assert compute_filtration_speed_state({}) == "off"
 
 
-def test_get_filtration_speed_pump_off():
-    # "Filtration Pump" explicitly False → 0 (off)
-    assert get_filtration_speed({"Filtration Pump": False}) == 0
+def test_compute_filtration_speed_state_pump_off():
+    # "Filtration Pump" explicitly False → "off"
+    assert compute_filtration_speed_state({"Filtration Pump": False}) == "off"
 
 
 def test_get_filtration_pump_type():

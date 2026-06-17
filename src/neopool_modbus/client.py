@@ -28,13 +28,13 @@ from pymodbus.framer import FramerType
 from .decoders import (
     build_timer_block,
     combine_u32,
+    compute_filtration_speed_state,
     decode_cell_boost,
     decode_filtration_mode,
     decode_par_model_modules,
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
-    get_filtration_speed,
     modbus_regs_to_ascii,
     parse_timer_block,
 )
@@ -1137,7 +1137,7 @@ class NeoPoolModbusClient:
         ) or bool((result.get("MBF_HIDRO_STATUS") or 0) & 0x0040)
 
         # Add filtration speed and type
-        result["FILTRATION_SPEED"] = get_filtration_speed(result)
+        result["filtration_speed_state"] = compute_filtration_speed_state(result)
 
         _collapse_u32_register_pairs(result)
 
