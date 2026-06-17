@@ -1239,15 +1239,15 @@ class NeoPoolModbusClient:
         await self.async_write_register(RESET_USER_COUNTERS_REGISTER, 1)
         return await self.async_write_register(EEPROM_SAVE_REGISTER, 1)
 
-    async def async_sync_device_time(
-        self, low: int, high: int
-    ) -> dict[str, Any] | None:
+    async def async_sync_device_time(self, timestamp: int) -> dict[str, Any] | None:
         """Sync the device RTC.
 
-        Writes [low, high] to MBF_PAR_TIME (0x0408) and then triggers
-        MBF_ACTION_COPY_TO_RTC (0x04F0). Caller supplies the 16-bit halves
-        of the desired Unix timestamp.
+        Writes the 32-bit *timestamp* split into LOW/HIGH halves to
+        MBF_PAR_TIME (0x0408) and then triggers MBF_ACTION_COPY_TO_RTC
+        (0x04F0).
         """
+        low = timestamp & 0xFFFF
+        high = (timestamp >> 16) & 0xFFFF
         await self.async_write_register(DEVICE_TIME_REGISTER, [low, high])
         return await self.async_write_register(COPY_TO_RTC_REGISTER, 1)
 

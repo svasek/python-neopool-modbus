@@ -226,7 +226,7 @@ addresses:
 | `async_clear_errors()`                         | one-shot to `MBF_ESCAPE`                                                              |
 | `async_save_to_eeprom()`                       | one-shot to `MBF_SAVE_TO_EEPROM`                                                      |
 | `async_reset_user_counters()`                  | resets user counters and chains the EEPROM save (the reset is volatile)                |
-| `async_sync_device_time(low, high)`            | writes the two halves of `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`         |
+| `async_sync_device_time(timestamp)`            | writes the 32-bit `timestamp` to `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`  |
 
 Unknown mode/speed names raise `ValueError` before any I/O happens.
 

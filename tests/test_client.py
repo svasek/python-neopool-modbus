@@ -3149,12 +3149,13 @@ async def test_async_reset_user_counters_resets_then_saves(config):
 
 @pytest.mark.asyncio
 async def test_async_sync_device_time_writes_halves_then_copy_to_rtc(config):
-    """Two-step sequence: write [low, high] to MBF_PAR_TIME, then trigger COPY_TO_RTC."""
+    """Splits the timestamp into low/high halves and triggers COPY_TO_RTC."""
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock(
         side_effect=[{"ok": "time"}, {"ok": "copy"}]
     )
-    result = await client.async_sync_device_time(0x1234, 0x5678)
+    # 0x56781234 -> low=0x1234, high=0x5678
+    result = await client.async_sync_device_time(0x56781234)
     assert result == {"ok": "copy"}
     assert client.async_write_register.await_args_list == [
         ((neopool_modbus.DEVICE_TIME_REGISTER, [0x1234, 0x5678]),),
