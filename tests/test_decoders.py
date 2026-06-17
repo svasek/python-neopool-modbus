@@ -23,7 +23,10 @@ from neopool_modbus.decoders import (
     decode_cell_boost,
     decode_filtration_mode,
     decode_filtration_speed,
+    decode_hidro_polarity,
+    decode_ion_polarity,
     decode_par_model_modules,
+    decode_ph_pump_status,
     derive_timer_stop,
     encode_cell_boost,
     encode_filtration_mode,
@@ -41,6 +44,7 @@ from neopool_modbus.decoders import (
     parse_version,
     seconds_to_hhmm,
 )
+from neopool_modbus.registers import TimerRelayMode
 
 
 def test_parse_version():
@@ -744,3 +748,233 @@ def test_aggregate_filtration_remaining_ignores_other_keys():
         "relay_aux1_countdown": 9999,
     }
     assert aggregate_filtration_remaining(data) == 100
+
+
+# ---------------------------------------------------------------------------
+# TimerRelayMode
+# ---------------------------------------------------------------------------
+
+
+def test_timer_relay_mode_values() -> None:
+    """Enum values match vendor spec (MBV_PAR_CTIMER_*)."""
+    assert TimerRelayMode.ENABLED == 1
+    assert TimerRelayMode.ALWAYS_ON == 3
+    assert TimerRelayMode.ALWAYS_OFF == 4
+
+
+def test_timer_relay_mode_is_int() -> None:
+    """TimerRelayMode members compare equal to plain ints."""
+    assert TimerRelayMode.ALWAYS_ON == 3
+    assert TimerRelayMode.ALWAYS_OFF == 4
+
+
+# ---------------------------------------------------------------------------
+# decode_hidro_polarity
+# ---------------------------------------------------------------------------
+
+
+def test_decode_hidro_polarity_returns_none_when_no_data() -> None:
+    assert decode_hidro_polarity({}) is None
+
+
+def test_decode_hidro_polarity_off_when_filtration_false() -> None:
+    data = {
+        "HIDRO in Pol1": True,
+        "HIDRO in Pol2": False,
+        "HIDRO in dead time": False,
+        "Filtration Pump": False,
+    }
+    assert decode_hidro_polarity(data) == "off"
+
+
+def test_decode_hidro_polarity_no_flow() -> None:
+    data = {
+        "HIDRO in Pol1": False,
+        "HIDRO in Pol2": False,
+        "HIDRO in dead time": False,
+        "Filtration Pump": True,
+        "HIDRO Cell Flow FL1": False,
+    }
+    assert decode_hidro_polarity(data) == "no_flow"
+
+
+def test_decode_hidro_polarity_dead_time() -> None:
+    data = {
+        "HIDRO in Pol1": False,
+        "HIDRO in Pol2": False,
+        "HIDRO in dead time": True,
+        "Filtration Pump": True,
+        "HIDRO Cell Flow FL1": True,
+    }
+    assert decode_hidro_polarity(data) == "dead_time"
+
+
+def test_decode_hidro_polarity_pol1() -> None:
+    data = {
+        "HIDRO in Pol1": True,
+        "HIDRO in Pol2": False,
+        "HIDRO in dead time": False,
+        "Filtration Pump": True,
+        "HIDRO Cell Flow FL1": True,
+    }
+    assert decode_hidro_polarity(data) == "pol1"
+
+
+def test_decode_hidro_polarity_pol2() -> None:
+    data = {
+        "HIDRO in Pol1": False,
+        "HIDRO in Pol2": True,
+        "HIDRO in dead time": False,
+        "Filtration Pump": True,
+        "HIDRO Cell Flow FL1": True,
+    }
+    assert decode_hidro_polarity(data) == "pol2"
+
+
+def test_decode_hidro_polarity_off_fallback() -> None:
+    data = {
+        "HIDRO in Pol1": False,
+        "HIDRO in Pol2": False,
+        "HIDRO in dead time": False,
+        "Filtration Pump": True,
+        "HIDRO Cell Flow FL1": True,
+    }
+    assert decode_hidro_polarity(data) == "off"
+
+
+# ---------------------------------------------------------------------------
+# decode_ion_polarity
+# ---------------------------------------------------------------------------
+
+
+def test_decode_ion_polarity_returns_none_when_no_data() -> None:
+    assert decode_ion_polarity({}) is None
+
+
+def test_decode_ion_polarity_dead_time() -> None:
+    data = {"ION in Pol1": False, "ION in Pol2": False, "ION in dead time": True}
+    assert decode_ion_polarity(data) == "dead_time"
+
+
+def test_decode_ion_polarity_pol1() -> None:
+    data = {"ION in Pol1": True, "ION in Pol2": False, "ION in dead time": False}
+    assert decode_ion_polarity(data) == "pol1"
+
+
+def test_decode_ion_polarity_pol2() -> None:
+    data = {"ION in Pol1": False, "ION in Pol2": True, "ION in dead time": False}
+    assert decode_ion_polarity(data) == "pol2"
+
+
+def test_decode_ion_polarity_off() -> None:
+    data = {"ION in Pol1": False, "ION in Pol2": False, "ION in dead time": False}
+    assert decode_ion_polarity(data) == "off"
+
+
+# ---------------------------------------------------------------------------
+# decode_ph_pump_status
+# ---------------------------------------------------------------------------
+
+
+def test_decode_ph_pump_status_returns_none_when_no_data() -> None:
+    assert decode_ph_pump_status({}) is None
+
+
+def test_decode_ph_pump_status_returns_none_when_ctrl_missing() -> None:
+    assert (
+        decode_ph_pump_status({"pH acid pump active": True, "pH pump active": True})
+        is None
+    )
+
+
+def test_decode_ph_pump_status_off() -> None:
+    assert (
+        decode_ph_pump_status(
+            {
+                "pH control module": False,
+                "pH acid pump active": False,
+                "pH pump active": False,
+            }
+        )
+        == "off"
+    )
+
+
+def test_decode_ph_pump_status_acid_only_mode_active() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": False,
+        "pH pump active": True,
+        "MBF_PAR_RELAY_PH": 1,
+    }
+    assert decode_ph_pump_status(data) == "acid"
+
+
+def test_decode_ph_pump_status_acid_only_mode_idle() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": False,
+        "pH pump active": False,
+        "MBF_PAR_RELAY_PH": 1,
+    }
+    assert decode_ph_pump_status(data) == "idle"
+
+
+def test_decode_ph_pump_status_base_only_mode_active() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": False,
+        "pH pump active": True,
+        "MBF_PAR_RELAY_PH": 2,
+    }
+    assert decode_ph_pump_status(data) == "base"
+
+
+def test_decode_ph_pump_status_base_only_mode_idle() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": False,
+        "pH pump active": False,
+        "MBF_PAR_RELAY_PH": 2,
+    }
+    assert decode_ph_pump_status(data) == "idle"
+
+
+def test_decode_ph_pump_status_both() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": True,
+        "pH pump active": True,
+        "MBF_PAR_RELAY_PH": 0,
+    }
+    assert decode_ph_pump_status(data) == "both"
+
+
+def test_decode_ph_pump_status_acid() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": True,
+        "pH pump active": False,
+        "MBF_PAR_RELAY_PH": 0,
+    }
+    assert decode_ph_pump_status(data) == "acid"
+
+
+def test_decode_ph_pump_status_base() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": False,
+        "pH pump active": True,
+        "MBF_PAR_RELAY_PH": 0,
+    }
+    assert decode_ph_pump_status(data) == "base"
+
+
+def test_decode_ph_pump_status_idle() -> None:
+    data = {
+        "pH control module": True,
+        "pH acid pump active": False,
+        "pH pump active": False,
+        "MBF_PAR_RELAY_PH": 0,
+    }
+    assert decode_ph_pump_status(data) == "idle"

@@ -21,10 +21,21 @@ them via re-export.
 
 from __future__ import annotations
 
+from enum import IntEnum
+
 # Default Modbus framer used when reading from a TCP gateway.
 #   "tcp" -- standard Modbus TCP (MBAP header)
 #   "rtu" -- RTU encoded over TCP (no MBAP, includes CRC)
 DEFAULT_MODBUS_FRAMER = "tcp"
+
+
+class TimerRelayMode(IntEnum):
+    """Relay timer enable register values (MBV_PAR_CTIMER_*)."""
+
+    ENABLED = 1  # timer-controlled (MBV_PAR_CTIMER_ENABLED)
+    ALWAYS_ON = 3  # MBV_PAR_CTIMER_ALWAYS_ON
+    ALWAYS_OFF = 4  # MBV_PAR_CTIMER_ALWAYS_OFF
+
 
 # Single-register write addresses with special semantics.
 MANUAL_FILTRATION_REGISTER = 0x0413
@@ -71,6 +82,21 @@ FILTRATION_SPEED_SHIFT = 4
 
 # MBF_RELAY_STATE has 7 relays (bits 0-6); MBF_PAR_*_RELAY_GPIO is 1-based.
 MAX_RELAY_GPIO = 7
+
+# Registers that assign physical relay outputs (GPIO number, valid range 1-MAX_RELAY_GPIO).
+# A value outside this range indicates register corruption (e.g. framer mismatch).
+GPIO_REGISTERS: dict[str, str] = {
+    "MBF_PAR_FILT_GPIO": "Filtration relay",
+    "MBF_PAR_LIGHTING_GPIO": "Lighting relay",
+    "MBF_PAR_HEATING_GPIO": "Heating relay",
+    "MBF_PAR_PH_ACID_RELAY_GPIO": "pH acid pump relay",
+    "MBF_PAR_PH_BASE_RELAY_GPIO": "pH base pump relay",
+    "MBF_PAR_RX_RELAY_GPIO": "Redox pump relay",
+    "MBF_PAR_CL_RELAY_GPIO": "Chlorine pump relay",
+    "MBF_PAR_CD_RELAY_GPIO": "Conductivity pump relay",
+    "MBF_PAR_UV_RELAY_GPIO": "UV lamp relay",
+    "MBF_PAR_FILTVALVE_GPIO": "Filter valve relay",
+}
 
 # NeoPool firmware refuses Modbus read requests larger than this many
 # registers per request. The library batches its own internal reads to
@@ -125,6 +151,7 @@ __all__ = [
     "ESCAPE_REGISTER",
     "EXEC_REGISTER",
     "FILTRATION_CONF_REGISTER",
+    "GPIO_REGISTERS",
     "FILTRATION_MODE_REGISTER",
     "FILTRATION_SPEED_MASK",
     "FILTRATION_SPEED_SHIFT",
@@ -137,6 +164,7 @@ __all__ = [
     "RESET_USER_COUNTERS_REGISTER",
     "STOP_ALL_MODULES_REGISTER",
     "TIMER_BLOCKS",
+    "TimerRelayMode",
     "is_input_register",
     "is_valid_relay_gpio",
 ]
