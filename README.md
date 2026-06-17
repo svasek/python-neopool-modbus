@@ -276,7 +276,7 @@ out-of-range AUX relay index — those are not transport failures.
   picks Read Input vs Read Holding based on the address
 - High-level decoded views in `async_read_all` (`filtration_mode`,
   `cell_boost_mode`, `installed_modules`) and 32-bit register pairs
-  (`MBF_PAR_TIME`, `MBF_CELL_RUNTIME`, ...) collapsed into single keys
+  (`MBF_PAR_TIME`, `CELL_RUNTIME_TOTAL`, ...) collapsed into single keys
 - Named write operations for filtration mode / speed, cell boost, temp
   setpoint, time sync, error clear, EEPROM save, user-counter reset
 - Pure capability predicates over a register snapshot, so an integration

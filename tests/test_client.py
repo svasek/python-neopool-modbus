@@ -2910,7 +2910,7 @@ def test_collapse_u32_combines_known_pair():
     }
     neopool_modbus._collapse_u32_register_pairs(result)
     assert result["MBF_PAR_TIME"] == 0x12345678
-    assert result["MBF_CELL_RUNTIME"] == 100
+    assert result["CELL_RUNTIME_TOTAL"] == 100
     assert "MBF_PAR_TIME_LOW" not in result
     assert "MBF_PAR_TIME_HIGH" not in result
     assert "MBF_CELL_RUNTIME_LOW" not in result

@@ -100,24 +100,24 @@ _FULL_READ_INTERVAL = 60
 # halves so consumers never have to recombine them by hand.
 _U32_REGISTER_PAIRS: tuple[tuple[str, str, str], ...] = (
     # (combined_key, low_key, high_key)
-    ("MBF_CELL_RUNTIME", "MBF_CELL_RUNTIME_LOW", "MBF_CELL_RUNTIME_HIGH"),
+    ("CELL_RUNTIME_TOTAL", "MBF_CELL_RUNTIME_LOW", "MBF_CELL_RUNTIME_HIGH"),
     (
-        "MBF_CELL_RUNTIME_PART",
+        "CELL_RUNTIME_PART",
         "MBF_CELL_RUNTIME_PART_LOW",
         "MBF_CELL_RUNTIME_PART_HIGH",
     ),
     (
-        "MBF_CELL_RUNTIME_POLA",
+        "CELL_RUNTIME_POLA",
         "MBF_CELL_RUNTIME_POLA_LOW",
         "MBF_CELL_RUNTIME_POLA_HIGH",
     ),
     (
-        "MBF_CELL_RUNTIME_POLB",
+        "CELL_RUNTIME_POLB",
         "MBF_CELL_RUNTIME_POLB_LOW",
         "MBF_CELL_RUNTIME_POLB_HIGH",
     ),
     (
-        "MBF_CELL_RUNTIME_POL_CHANGES",
+        "CELL_RUNTIME_POL_CHANGES",
         "MBF_CELL_RUNTIME_POL_CHANGES_LOW",
         "MBF_CELL_RUNTIME_POL_CHANGES_HIGH",
     ),
