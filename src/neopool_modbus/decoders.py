@@ -294,36 +294,37 @@ def generate_time_options(step_minutes: int = 15) -> list[str]:
     return options
 
 
-def get_filtration_speed(data: dict[str, Any]) -> int:
-    """Get filtration speed based on relay state and configuration."""
-    relay_state = data.get("MBF_RELAY_STATE", 0)
-    # Use the dynamically decoded "Filtration Pump" key (set via GPIO mapping).
-    # Only report a speed when the pump is explicitly on; treat both False
-    # (pump off) and None (key not yet decoded / GPIO not assigned) as off.
+def compute_filtration_speed_state(data: dict[str, Any]) -> str:
+    """Composite filtration speed: off / low / mid / high.
+
+    Reads MBF_RELAY_STATE speed bits first; falls back to the speed
+    nibble of MBF_PAR_FILTRATION_CONF when the relay reports nothing.
+    Returns ``"off"`` whenever the dynamically decoded "Filtration Pump"
+    key is not ``True``.
+    """
     if data.get("Filtration Pump") is not True:
-        return 0  # Filtration is off or unknown
+        return "off"
+
+    relay_state = data.get("MBF_RELAY_STATE", 0)
+    relay_speed = (relay_state & 0x0700) >> 8
+    # Highest set bit wins; supports both individual-bit (1/2/4) and
+    # cumulative (1/3/7) encodings.
+    if relay_speed & 0x04:
+        return "high"
+    if relay_speed & 0x02:
+        return "mid"
+    if relay_speed & 0x01:
+        return "low"
 
     par_filtration_conf = data.get("MBF_PAR_FILTRATION_CONF", 0)
-    relay_speed = (relay_state & 0x0700) >> 8
-    # Check highest bit set - supports both individual-bit (1/2/4)
-    # and cumulative encodings (1/3/7) used by some controllers.
-    if relay_speed & 0x04:
-        return 3  # High
-    elif relay_speed & 0x02:
-        return 2  # Mid
-    elif relay_speed & 0x01:
-        return 1  # Low
-
     conf_speed = (par_filtration_conf & 0x0070) >> 4
-    # Preserved as if/elif chain for 1:1 port from the HA integration; refactor
-    # to dict lookup is tracked separately.
-    if conf_speed == 0:  # noqa: SIM116
-        return 1
-    elif conf_speed == 1:
-        return 2
-    elif conf_speed == 2:
-        return 3
-    return 0
+    if conf_speed == 0:
+        return "low"
+    if conf_speed == 1:
+        return "mid"
+    if conf_speed == 2:
+        return "high"
+    return "off"
 
 
 def get_filtration_pump_type(par_filtration_conf: int) -> int:
@@ -424,6 +425,7 @@ __all__ = [
     "aggregate_filtration_remaining",
     "build_timer_block",
     "combine_u32",
+    "compute_filtration_speed_state",
     "decode_cell_boost",
     "decode_filtration_mode",
     "decode_filtration_speed",
@@ -434,7 +436,6 @@ __all__ = [
     "encode_filtration_speed",
     "generate_time_options",
     "get_filtration_pump_type",
-    "get_filtration_speed",
     "get_machine_name",
     "get_timer_interval",
     "hhmm_to_seconds",
