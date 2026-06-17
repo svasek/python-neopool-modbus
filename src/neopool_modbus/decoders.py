@@ -221,12 +221,15 @@ def parse_timer_block(regs: list[int]) -> dict[str, Any]:
     def u32(lsb: int, msb: int) -> int:
         return (msb << 16) | lsb
 
+    on = u32(padded[1], padded[2])
+    interval = u32(padded[7], padded[8])
     return {
         "enable": padded[0],
-        "on": u32(padded[1], padded[2]),
+        "on": on,
         "off": u32(padded[3], padded[4]),
         "period": u32(padded[5], padded[6]),
-        "interval": u32(padded[7], padded[8]),
+        "interval": interval,
+        "stop": derive_timer_stop(on, interval),
         "countdown": u32(padded[9], padded[10]),
         "function": padded[11],
         "work_time": u32(padded[13], padded[14]),

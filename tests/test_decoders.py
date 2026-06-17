@@ -228,6 +228,7 @@ def test_parse_timer_block_full():
         "off",
         "period",
         "interval",
+        "stop",
         "countdown",
         "function",
         "work_time",
@@ -235,6 +236,10 @@ def test_parse_timer_block_full():
     # Example: on = u32(regs[1], regs[2]) == (regs[2] << 16) | regs[1]
     assert result["enable"] == 1
     assert result["on"] == (3 << 16) | 2
+    # stop = (on + interval) % 86400
+    on = (3 << 16) | 2
+    interval = (9 << 16) | 8
+    assert result["stop"] == (on + interval) % 86400
 
 
 def test_parse_timer_block_short():
@@ -244,7 +249,9 @@ def test_parse_timer_block_short():
     assert result["enable"] == 1
     assert result["on"] == (3 << 16) | 2  # padded msb=3
     assert result["off"] == 0
-    assert len(result) == 8
+    # stop = (on + 0) % 86400; padded interval is 0, so stop is on mod day.
+    assert result["stop"] == result["on"] % 86400
+    assert len(result) == 9
 
 
 def test_modbus_regs_to_hex_string_basic():
