@@ -596,7 +596,7 @@ def test_encode_filtration_mode_rejects_unknown():
     [
         (0x0000, "inactive"),
         (0x85A0, "active"),
-        (0x05A0, "active_with_redox"),
+        (0x05A0, "active_redox"),
         # any value with bit 0x8000 set decodes as "active" (no-redox variant)
         (0x8000, "active"),
         (0x8001, "active"),
@@ -615,7 +615,7 @@ def test_decode_cell_boost(reg_val, expected):
     [
         ("inactive", 0),
         ("active", 0x85A0),
-        ("active_with_redox", 0x05A0),
+        ("active_redox", 0x05A0),
     ],
 )
 def test_encode_cell_boost(name, expected):
@@ -629,7 +629,7 @@ def test_encode_cell_boost_rejects_unknown():
 
 def test_cell_boost_round_trip():
     """encode -> decode round trips for every public mode."""
-    for name in ("inactive", "active", "active_with_redox"):
+    for name in ("inactive", "active", "active_redox"):
         assert decode_cell_boost(encode_cell_boost(name)) == name
 
 

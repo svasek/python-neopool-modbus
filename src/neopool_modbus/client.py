@@ -1188,7 +1188,7 @@ class NeoPoolModbusClient:
     async def async_set_cell_boost(
         self, mode: str, apply: bool = True
     ) -> dict[str, Any] | None:
-        """Set the cell boost mode (inactive / active / active_with_redox).
+        """Set the cell boost mode (inactive / active / active_redox).
 
         ``apply`` defaults to True; pass False for a volatile change.
         """

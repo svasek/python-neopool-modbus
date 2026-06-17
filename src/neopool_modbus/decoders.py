@@ -97,7 +97,7 @@ def encode_filtration_mode(name: str) -> int:
 _MBMSK_CELL_BOOST_ACTIVE = 0x05A0  # boost active pattern
 _MBMSK_CELL_BOOST_NO_REDOX = 0x8000  # disables redox-driven dosing while active
 
-_CELL_BOOST_MODES: tuple[str, ...] = ("inactive", "active", "active_with_redox")
+_CELL_BOOST_MODES: tuple[str, ...] = ("inactive", "active", "active_redox")
 
 
 def decode_cell_boost(reg_val: int | None) -> str | None:
@@ -110,7 +110,7 @@ def decode_cell_boost(reg_val: int | None) -> str | None:
     if val & _MBMSK_CELL_BOOST_NO_REDOX:
         return "active"
     if (val & _MBMSK_CELL_BOOST_ACTIVE) == _MBMSK_CELL_BOOST_ACTIVE:
-        return "active_with_redox"
+        return "active_redox"
     return None
 
 
@@ -118,13 +118,13 @@ def encode_cell_boost(name: str) -> int:
     """Return the wire value for a cell-boost *name*.
 
     Raises :class:`ValueError` if *name* is not one of ``inactive``,
-    ``active`` or ``active_with_redox``.
+    ``active`` or ``active_redox``.
     """
     if name == "inactive":
         return 0
     if name == "active":
         return _MBMSK_CELL_BOOST_ACTIVE | _MBMSK_CELL_BOOST_NO_REDOX
-    if name == "active_with_redox":
+    if name == "active_redox":
         return _MBMSK_CELL_BOOST_ACTIVE
     raise ValueError(
         f"unknown cell-boost mode {name!r}; expected one of {list(_CELL_BOOST_MODES)}"

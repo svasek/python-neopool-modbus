@@ -220,7 +220,7 @@ addresses:
 | Method                                         | Effect                                                                                |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `async_set_filtration_mode(name, apply=True)`  | manual / auto / heating / smart / intelligent / backwash                              |
-| `async_set_cell_boost(name, apply=True)`       | inactive / active / active_with_redox                                                 |
+| `async_set_cell_boost(name, apply=True)`       | inactive / active / active_redox                                                 |
 | `async_set_filtration_speed(name, apply=False)`| low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
 | `async_set_temp_setpoint(raw, apply=True)`     | writes the same scaled value to heating + intelligent registers in sync                |
 | `async_clear_errors()`                         | one-shot to `MBF_ESCAPE`                                                              |

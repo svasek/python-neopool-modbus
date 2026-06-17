@@ -2999,10 +2999,10 @@ async def test_async_set_filtration_mode_apply_override(config):
 
 @pytest.mark.asyncio
 async def test_async_set_cell_boost_writes_encoded_value(config):
-    """active_with_redox encodes to MBMSK_CELL_BOOST_ACTIVE (0x05A0)."""
+    """active_redox encodes to MBMSK_CELL_BOOST_ACTIVE (0x05A0)."""
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock(return_value={"ok": True})
-    result = await client.async_set_cell_boost("active_with_redox")
+    result = await client.async_set_cell_boost("active_redox")
     assert result == {"ok": True}
     client.async_write_register.assert_awaited_once_with(
         neopool_modbus.CELL_BOOST_REGISTER, 0x05A0, apply=True

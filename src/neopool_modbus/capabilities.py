@@ -174,14 +174,14 @@ def available_filtration_speeds(data: dict[str, Any]) -> tuple[str, ...]:
 def available_cell_boost_modes(data: dict[str, Any]) -> tuple[str, ...]:
     """Return the cell-boost modes offered by this controller.
 
-    Empty without a hydrolysis cell. ``active_with_redox`` is only offered
+    Empty without a hydrolysis cell. ``active_redox`` is only offered
     when the redox measurement module is also present; without it the user
     can still run the boost without redox-driven dosing.
     """
     if not is_hydrolysis_present(data):
         return ()
     if is_redox_module_present(data):
-        return ("inactive", "active", "active_with_redox")
+        return ("inactive", "active", "active_redox")
     return ("inactive", "active")
 
 

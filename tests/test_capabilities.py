@@ -354,5 +354,5 @@ def test_available_cell_boost_modes_with_hydrolysis_and_redox():
     assert available_cell_boost_modes(data) == (
         "inactive",
         "active",
-        "active_with_redox",
+        "active_redox",
     )
