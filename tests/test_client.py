@@ -3122,3 +3122,21 @@ async def test_async_sync_device_time_writes_halves_then_copy_to_rtc(config):
         ((neopool_modbus.DEVICE_TIME_REGISTER, [0x1234, 0x5678]),),
         ((neopool_modbus.COPY_TO_RTC_REGISTER, 1),),
     ]
+
+
+@pytest.mark.asyncio
+async def test_async_set_temp_setpoint_writes_both_registers(config):
+    """The heating + intelligent setpoints stay in sync; second write applies."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(
+        side_effect=[{"ok": "heat"}, {"ok": "intel"}]
+    )
+    result = await client.async_set_temp_setpoint(250)
+    # Returns the result of the apply=True (intelligent) write.
+    assert result == {"ok": "intel"}
+    assert client.async_write_register.await_args_list == [
+        call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
+        call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=True),
+    ]

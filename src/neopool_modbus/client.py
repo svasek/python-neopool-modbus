@@ -57,6 +57,8 @@ from .registers import (
     FILTRATION_MODE_REGISTER,
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
+    HEATING_SETPOINT_REGISTER,
+    INTELLIGENT_SETPOINT_REGISTER,
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
@@ -1232,6 +1234,18 @@ class NeoPoolModbusClient:
         """
         await self.async_write_register(DEVICE_TIME_REGISTER, [low, high])
         return await self.async_write_register(COPY_TO_RTC_REGISTER, 1)
+
+    async def async_set_temp_setpoint(self, raw: int) -> dict[str, Any] | None:
+        """Set the heating + intelligent target temperatures to *raw*.
+
+        Both setpoints share a single UI control in the integration, so
+        the values are written sequentially to keep them in sync. *raw*
+        is the already-scaled register value (e.g. 250 for 25.0 °C).
+        """
+        await self.async_write_register(HEATING_SETPOINT_REGISTER, raw)
+        return await self.async_write_register(
+            INTELLIGENT_SETPOINT_REGISTER, raw, apply=True
+        )
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:
