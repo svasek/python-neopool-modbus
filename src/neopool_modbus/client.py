@@ -47,7 +47,9 @@ from .exceptions import (
 from .registers import (
     CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
+    COPY_TO_RTC_REGISTER,
     DEFAULT_MODBUS_FRAMER,
+    DEVICE_TIME_REGISTER,
     EEPROM_SAVE_REGISTER,
     ESCAPE_REGISTER,
     EXEC_REGISTER,
@@ -1218,6 +1220,18 @@ class NeoPoolModbusClient:
         """
         await self.async_write_register(RESET_USER_COUNTERS_REGISTER, 1)
         return await self.async_write_register(EEPROM_SAVE_REGISTER, 1)
+
+    async def async_sync_device_time(
+        self, low: int, high: int
+    ) -> dict[str, Any] | None:
+        """Sync the device RTC.
+
+        Writes [low, high] to MBF_PAR_TIME (0x0408) and then triggers
+        MBF_ACTION_COPY_TO_RTC (0x04F0). Caller supplies the 16-bit halves
+        of the desired Unix timestamp.
+        """
+        await self.async_write_register(DEVICE_TIME_REGISTER, [low, high])
+        return await self.async_write_register(COPY_TO_RTC_REGISTER, 1)
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:
