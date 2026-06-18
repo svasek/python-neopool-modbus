@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in the library is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: make sure you are using the **latest released version** and that
+        the issue is in **this library**, not in the
+        [HA custom component](https://github.com/svasek/homeassistant-neopool-modbus/issues/new/choose)
+        or [HA Core](https://github.com/home-assistant/core/issues).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I am using the latest released version of this library.
+          required: true
+        - label: The issue is in this library, not in the HA integration or HA Core.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Library version
+      placeholder: "e.g. 3.4.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.13.0"
+    validations:
+      required: true
+
+  - type: input
+    id: pymodbus
+    attributes:
+      label: pymodbus version
+      placeholder: "e.g. 3.8.6"
+    validations:
+      required: false
+
+  - type: input
+    id: device
+    attributes:
+      label: Device / brand
+      description: NeoPool controller model or brand name (Sugar Valley, Bayrol, Hayward, etc.)
+      placeholder: "e.g. Oxilife"
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. Include the full error traceback if one was raised.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Instantiate client with ...
+        2. Call async_read_all()
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or register dump
+      description: Paste debug output, Modbus frame dumps, or raw register values here.
+      render: text
+    validations:
+      required: false

@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Question / Support
+    url: https://github.com/svasek/python-neopool-modbus/discussions
+    about: Ask usage questions or start a discussion
+  - name: Home Assistant integration issues (custom component)
+    url: https://github.com/svasek/homeassistant-neopool-modbus/issues/new/choose
+    about: Problems with the HA custom component, not this library
+  - name: Home Assistant Core issues
+    url: https://github.com/home-assistant/core/issues
+    about: Issues with the neopool integration in Home Assistant Core

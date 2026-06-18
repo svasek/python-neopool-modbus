@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose a new register, decoder, API method, or other library capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This library is the **protocol layer** for NeoPool Modbus communication.
+        Feature requests should be about register decoding, new API methods, or client behaviour.
+
+        - UI / HA entity requests belong in the [HA custom component repo](https://github.com/svasek/homeassistant-neopool-modbus).
+        - Issues with the neopool integration in Home Assistant Core belong in [HA Core](https://github.com/home-assistant/core/issues).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is a library concern, not a UI / HA integration concern.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One-paragraph description of what you want and why.
+    validations:
+      required: true
+
+  - type: textarea
+    id: register
+    attributes:
+      label: Register / Modbus details (if applicable)
+      description: |
+        Address, function code, data type, scale factor, and source (vendor doc page / dump).
+        Attach a register dump or vendor PDF if you have one.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API (if applicable)
+      description: Sketch of the method signature or return type you have in mind.
+      render: python
+    validations:
+      required: false
