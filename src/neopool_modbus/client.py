@@ -1303,7 +1303,9 @@ class NeoPoolModbusClient:
                 )
                 _LOGGER.error("Write failed at 0x%04X: %s", address, result)
                 return None
-            _LOGGER.debug("Wrote register(s) at 0x%04X: %s", address, value)
+            _LOGGER.debug(
+                "Wrote register(s) at 0x%04X: %s", address, [int(v) for v in value]
+            )
 
             # Confirm the write
             await asyncio.sleep(0.05)
