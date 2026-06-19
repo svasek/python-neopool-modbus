@@ -16,10 +16,12 @@
 [![Sponsor me](https://img.shields.io/badge/sponsor-❤-brightgreen?style=flat)](https://github.com/sponsors/svasek)
 [![Ko-fi](https://img.shields.io/badge/ko--fi-support-29abe0?style=flat&logo=ko-fi)](https://ko-fi.com/svasek)
 
-Async Python client for **NeoPool**-based pool controllers connected via
-**Modbus TCP**. NeoPool is a control system originally developed by the
-Spanish company **Sugar Valley** (acquired by **Hayward** in 2016), sold
-under many brand names and product lines worldwide.
+Async Python client for **NeoPool**-based pool controllers connected via **Modbus TCP**. 
+
+> [!NOTE]
+> NeoPool is a control system originally developed by the
+> Spanish company **Sugar Valley** (acquired by **Hayward** in 2016), sold
+> under many brand names and product lines worldwide.
 
 **Supported device models** (Sugar Valley / Hayward product lines):
 Hidrolife • Aquascenic • Oxilife • Bionet • Hidroniser • UVScenic •
@@ -29,7 +31,8 @@ Station • Aquarite
 Hayward • Brilix (Albixon) • Bayrol • Certikin • Poolstar • GrupAquadirect •
 Pentair • ProducPool • Pool Technologie • Kripsol
 
-> **Note:** _VistaPool_ is the name of Hayward's mobile/web app for
+> [!NOTE]
+> _VistaPool_ is the name of Hayward's mobile/web app for
 > cloud-based pool management. This library communicates **locally via
 > Modbus TCP** — it does not require or use the VistaPool app or any
 > cloud service.
@@ -289,7 +292,8 @@ to import `pymodbus` to catch errors:
 | `NeoPoolModbusError`     | A read returns a Modbus exception response (`isError()` true), or `async_write_aux_relay` / one of the timer write follow-ups returns `isError()` |
 | `NeoPoolError`           | Common base; catch this to handle any of the above                                |
 
-> ⚠️ `NeoPoolModbusClient.async_write_register()` is the exception to the
+> [!WARNING]
+> `NeoPoolModbusClient.async_write_register()` is the exception to the
 > table above: it returns `None` (rather than raising) on `isError()` so
 > existing callers in the Home Assistant integration keep working. A
 > future major release will tighten this to raise `NeoPoolModbusError`
