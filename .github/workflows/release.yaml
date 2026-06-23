@@ -40,7 +40,7 @@ jobs:
       id-token: write  # PyPI Trusted Publisher OIDC
     steps:
       - name: Checkout the released tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
