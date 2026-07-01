@@ -16,6 +16,14 @@
 import pytest
 
 from neopool_modbus.decoders import (
+    CELL_BOOST_MODE_LABELS,
+    FILTRATION_MODE_LABELS,
+    FILTRATION_SPEED_LABELS,
+    FILTRATION_SPEED_STATE_LABELS,
+    FILTVALVE_MODE_LABELS,
+    HIDRO_POLARITY_LABELS,
+    ION_POLARITY_LABELS,
+    PH_PUMP_STATUS_LABELS,
     PH_STATUS_ALARM_LABELS,
     aggregate_filtration_remaining,
     build_timer_block,
@@ -24,6 +32,7 @@ from neopool_modbus.decoders import (
     decode_cell_boost,
     decode_filtration_mode,
     decode_filtration_speed,
+    decode_filtvalve_mode,
     decode_hidro_polarity,
     decode_ion_polarity,
     decode_par_model_modules,
@@ -33,6 +42,7 @@ from neopool_modbus.decoders import (
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
+    encode_filtvalve_mode,
     generate_time_options,
     get_filtration_pump_type,
     get_machine_name,
@@ -44,6 +54,7 @@ from neopool_modbus.decoders import (
     pad_list,
     parse_timer_block,
     parse_version,
+    ph_pump_options,
     seconds_to_hhmm,
 )
 from neopool_modbus.registers import TimerRelayMode
@@ -1018,3 +1029,137 @@ def test_decode_ph_alarm_unknown_value_returns_none() -> None:
 def test_ph_status_alarm_labels_cover_documented_range() -> None:
     """The label table must expose every value from 0 through 6."""
     assert set(PH_STATUS_ALARM_LABELS) == {0, 1, 2, 3, 4, 5, 6}
+
+
+# ---------------------------------------------------------------------------
+# Exposed label collections
+# ---------------------------------------------------------------------------
+
+
+def test_filtration_mode_labels_match_wire_values() -> None:
+    """Wire-protocol mapping must be a stable public interface."""
+    assert FILTRATION_MODE_LABELS == {
+        0: "manual",
+        1: "auto",
+        2: "heating",
+        3: "smart",
+        4: "intelligent",
+        13: "backwash",
+    }
+
+
+def test_filtration_speed_labels_match_wire_values() -> None:
+    assert FILTRATION_SPEED_LABELS == {0: "low", 1: "mid", 2: "high"}
+
+
+def test_filtration_speed_state_labels() -> None:
+    assert FILTRATION_SPEED_STATE_LABELS == ("off", "low", "mid", "high")
+
+
+def test_cell_boost_mode_labels() -> None:
+    assert CELL_BOOST_MODE_LABELS == {
+        0: "inactive",
+        1: "active",
+        2: "active_redox",
+    }
+
+
+def test_filtvalve_mode_labels() -> None:
+    assert FILTVALVE_MODE_LABELS == {
+        1: "enabled",
+        3: "always_on",
+        4: "always_off",
+    }
+
+
+def test_hidro_polarity_labels() -> None:
+    assert HIDRO_POLARITY_LABELS == ("pol1", "pol2", "dead_time", "no_flow", "off")
+
+
+def test_ion_polarity_labels() -> None:
+    assert ION_POLARITY_LABELS == ("pol1", "pol2", "dead_time", "off")
+
+
+def test_ph_pump_status_labels() -> None:
+    assert PH_PUMP_STATUS_LABELS == ("off", "idle", "acid", "base", "both")
+
+
+# ---------------------------------------------------------------------------
+# decode_filtvalve_mode / encode_filtvalve_mode
+# ---------------------------------------------------------------------------
+
+
+def test_decode_filtvalve_mode_none_returns_none() -> None:
+    assert decode_filtvalve_mode(None) is None
+
+
+@pytest.mark.parametrize(
+    ("reg_val", "expected"),
+    [
+        (1, "enabled"),
+        (3, "always_on"),
+        (4, "always_off"),
+    ],
+)
+def test_decode_filtvalve_mode_known_values(reg_val: int, expected: str) -> None:
+    assert decode_filtvalve_mode(reg_val) == expected
+
+
+@pytest.mark.parametrize("reg_val", [0, 2, 5, 99])
+def test_decode_filtvalve_mode_unknown_returns_none(reg_val: int) -> None:
+    assert decode_filtvalve_mode(reg_val) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("enabled", 1),
+        ("always_on", 3),
+        ("always_off", 4),
+    ],
+)
+def test_encode_filtvalve_mode_roundtrip(name: str, expected: int) -> None:
+    assert encode_filtvalve_mode(name) == expected
+    assert decode_filtvalve_mode(expected) == name
+
+
+def test_encode_filtvalve_mode_rejects_unknown() -> None:
+    with pytest.raises(ValueError, match="unknown filtvalve mode"):
+        encode_filtvalve_mode("bogus")
+
+
+# ---------------------------------------------------------------------------
+# ph_pump_options
+# ---------------------------------------------------------------------------
+
+
+def test_ph_pump_options_default_acid_and_base() -> None:
+    assert ph_pump_options({"MBF_PAR_RELAY_PH": 0}) == [
+        "off",
+        "idle",
+        "acid",
+        "base",
+        "both",
+    ]
+
+
+def test_ph_pump_options_missing_key_defaults_to_full() -> None:
+    assert ph_pump_options({}) == ["off", "idle", "acid", "base", "both"]
+
+
+def test_ph_pump_options_none_key_defaults_to_full() -> None:
+    assert ph_pump_options({"MBF_PAR_RELAY_PH": None}) == [
+        "off",
+        "idle",
+        "acid",
+        "base",
+        "both",
+    ]
+
+
+def test_ph_pump_options_acid_only() -> None:
+    assert ph_pump_options({"MBF_PAR_RELAY_PH": 1}) == ["off", "idle", "acid"]
+
+
+def test_ph_pump_options_base_only() -> None:
+    assert ph_pump_options({"MBF_PAR_RELAY_PH": 2}) == ["off", "idle", "base"]
