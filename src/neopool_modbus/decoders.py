@@ -61,7 +61,7 @@ def decode_par_model_modules(bitmask: int | None) -> list[str]:
 
 
 # MBF_PAR_FILT_MODE values (wire protocol).
-_FILTRATION_MODES: dict[int, str] = {
+FILTRATION_MODE_LABELS: dict[int, str] = {
     0: "manual",
     1: "auto",
     2: "heating",
@@ -69,14 +69,16 @@ _FILTRATION_MODES: dict[int, str] = {
     4: "intelligent",
     13: "backwash",
 }
-_FILTRATION_MODE_VALUES: dict[str, int] = {v: k for k, v in _FILTRATION_MODES.items()}
+_FILTRATION_MODE_VALUES: dict[str, int] = {
+    v: k for k, v in FILTRATION_MODE_LABELS.items()
+}
 
 
 def decode_filtration_mode(reg_val: int | None) -> str | None:
     """Return the filtration-mode name for *reg_val*, or ``None`` if unknown."""
     if reg_val is None:
         return None
-    return _FILTRATION_MODES.get(int(reg_val))
+    return FILTRATION_MODE_LABELS.get(int(reg_val))
 
 
 def encode_filtration_mode(name: str) -> int:
@@ -97,7 +99,11 @@ def encode_filtration_mode(name: str) -> int:
 _MBMSK_CELL_BOOST_ACTIVE = 0x05A0  # boost active pattern
 _MBMSK_CELL_BOOST_NO_REDOX = 0x8000  # disables redox-driven dosing while active
 
-_CELL_BOOST_MODES: tuple[str, ...] = ("inactive", "active", "active_redox")
+CELL_BOOST_MODE_LABELS: dict[int, str] = {
+    0: "inactive",
+    1: "active",
+    2: "active_redox",
+}
 
 
 def decode_cell_boost(reg_val: int | None) -> str | None:
@@ -106,11 +112,11 @@ def decode_cell_boost(reg_val: int | None) -> str | None:
         return None
     val = int(reg_val)
     if val == 0:
-        return "inactive"
+        return CELL_BOOST_MODE_LABELS[0]
     if val & _MBMSK_CELL_BOOST_NO_REDOX:
-        return "active"
+        return CELL_BOOST_MODE_LABELS[1]
     if (val & _MBMSK_CELL_BOOST_ACTIVE) == _MBMSK_CELL_BOOST_ACTIVE:
-        return "active_redox"
+        return CELL_BOOST_MODE_LABELS[2]
     return None
 
 
@@ -120,14 +126,15 @@ def encode_cell_boost(name: str) -> int:
     Raises :class:`ValueError` if *name* is not one of ``inactive``,
     ``active`` or ``active_redox``.
     """
-    if name == "inactive":
+    if name == CELL_BOOST_MODE_LABELS[0]:
         return 0
-    if name == "active":
+    if name == CELL_BOOST_MODE_LABELS[1]:
         return _MBMSK_CELL_BOOST_ACTIVE | _MBMSK_CELL_BOOST_NO_REDOX
-    if name == "active_redox":
+    if name == CELL_BOOST_MODE_LABELS[2]:
         return _MBMSK_CELL_BOOST_ACTIVE
     raise ValueError(
-        f"unknown cell-boost mode {name!r}; expected one of {list(_CELL_BOOST_MODES)}"
+        f"unknown cell-boost mode {name!r}; "
+        f"expected one of {list(CELL_BOOST_MODE_LABELS.values())}"
     )
 
 
@@ -135,15 +142,17 @@ def encode_cell_boost(name: str) -> int:
 # "Off" is not a value of these bits -- it is signalled by the filtration
 # mode register or the manual filtration-state register, and must be set
 # through those, not via this codec.
-_FILTRATION_SPEEDS: dict[int, str] = {0: "low", 1: "mid", 2: "high"}
-_FILTRATION_SPEED_VALUES: dict[str, int] = {v: k for k, v in _FILTRATION_SPEEDS.items()}
+FILTRATION_SPEED_LABELS: dict[int, str] = {0: "low", 1: "mid", 2: "high"}
+_FILTRATION_SPEED_VALUES: dict[str, int] = {
+    v: k for k, v in FILTRATION_SPEED_LABELS.items()
+}
 
 
 def decode_filtration_speed(idx: int | None) -> str | None:
     """Return the filtration-speed name for *idx*, or ``None`` if unknown."""
     if idx is None:
         return None
-    return _FILTRATION_SPEEDS.get(int(idx))
+    return FILTRATION_SPEED_LABELS.get(int(idx))
 
 
 def encode_filtration_speed(name: str) -> int:
@@ -158,6 +167,42 @@ def encode_filtration_speed(name: str) -> int:
         raise ValueError(
             f"unknown filtration speed {name!r}; "
             f"expected one of {sorted(_FILTRATION_SPEED_VALUES)}"
+        ) from None
+
+
+# MBF_PAR_FILTVALVE_MODE values exposed by the integration.
+# The controller also supports 0 (disabled) and 2 (auto_linked), but
+# those states are internal and not selectable through the standard UI,
+# so this codec deliberately covers only the user-facing subset.
+FILTVALVE_MODE_LABELS: dict[int, str] = {
+    1: "enabled",
+    3: "always_on",
+    4: "always_off",
+}
+_FILTVALVE_MODE_VALUES: dict[str, int] = {
+    v: k for k, v in FILTVALVE_MODE_LABELS.items()
+}
+
+
+def decode_filtvalve_mode(reg_val: int | None) -> str | None:
+    """Return the filtration-valve mode label for *reg_val*, or ``None``."""
+    if reg_val is None:
+        return None
+    return FILTVALVE_MODE_LABELS.get(int(reg_val))
+
+
+def encode_filtvalve_mode(name: str) -> int:
+    """Return the wire value for a filtration-valve mode *name*.
+
+    Raises :class:`ValueError` if *name* is not one of ``enabled``,
+    ``always_on`` or ``always_off``.
+    """
+    try:
+        return _FILTVALVE_MODE_VALUES[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown filtvalve mode {name!r}; "
+            f"expected one of {sorted(_FILTVALVE_MODE_VALUES)}"
         ) from None
 
 
@@ -327,6 +372,10 @@ def compute_filtration_speed_state(data: dict[str, Any]) -> str:
     return "off"
 
 
+# Possible return values of :func:`compute_filtration_speed_state`.
+FILTRATION_SPEED_STATE_LABELS: tuple[str, ...] = ("off", "low", "mid", "high")
+
+
 def get_filtration_pump_type(par_filtration_conf: int) -> int:
     """Return the type of filtration pump based on configuration."""
     # 0 = standard, 1/2 = variable speed
@@ -443,6 +492,16 @@ def decode_hidro_polarity(data: dict[str, Any]) -> str | None:
     return "off"
 
 
+# Possible return values of :func:`decode_hidro_polarity`.
+HIDRO_POLARITY_LABELS: tuple[str, ...] = (
+    "pol1",
+    "pol2",
+    "dead_time",
+    "no_flow",
+    "off",
+)
+
+
 def decode_ion_polarity(data: dict[str, Any]) -> str | None:
     """Decode ionizer cell polarity state from coordinator data snapshot."""
     pol1 = data.get("ION in Pol1")
@@ -457,6 +516,39 @@ def decode_ion_polarity(data: dict[str, Any]) -> str | None:
     if pol2:
         return "pol2"
     return "off"
+
+
+# Possible return values of :func:`decode_ion_polarity`.
+ION_POLARITY_LABELS: tuple[str, ...] = ("pol1", "pol2", "dead_time", "off")
+
+
+# MBF_PH_STATUS bits 0-3 (mask 0x000F) encode a pH alarm state.
+# Values 0-5 come from the vendor Modbus spec; value 6 (tank level) is
+# emitted by real hardware when the acid/base tank runs dry and matches
+# the Tasmota driver's handling of the same register.
+PH_STATUS_ALARM_LABELS: dict[int, str] = {
+    0: "ok",
+    1: "ph_high",  # value 0.8 units above the high setpoint
+    2: "ph_low",  # value 0.8 units below the low setpoint
+    3: "pump_stopped",  # pH pump exceeded MBF_PAR_RELAY_PH_MAX_TIME
+    4: "ph_over",  # value above the high setpoint (fine band)
+    5: "ph_under",  # value below the low setpoint (fine band)
+    6: "tank_level",  # acid/base tank empty (float switch tripped)
+}
+
+
+def decode_ph_alarm(data: dict[str, Any]) -> str | None:
+    """Return the pH alarm label for MBF_PH_STATUS_ALARM, or ``None``.
+
+    Reads the ``MBF_PH_STATUS_ALARM`` snapshot key (which the client
+    already extracts from bits 0-3 of the ``MBF_PH_STATUS`` register)
+    and maps it via :data:`PH_STATUS_ALARM_LABELS`. Returns ``None``
+    when the key is missing or holds an unknown value.
+    """
+    value = data.get("MBF_PH_STATUS_ALARM")
+    if value is None:
+        return None
+    return PH_STATUS_ALARM_LABELS.get(int(value))
 
 
 def decode_ph_pump_status(data: dict[str, Any]) -> str | None:
@@ -485,7 +577,36 @@ def decode_ph_pump_status(data: dict[str, Any]) -> str | None:
     return "idle"
 
 
+# Possible return values of :func:`decode_ph_pump_status`.
+PH_PUMP_STATUS_LABELS: tuple[str, ...] = ("off", "idle", "acid", "base", "both")
+
+
+def ph_pump_options(data: dict[str, Any]) -> list[str]:
+    """Return the pH pump status options narrowed by ``MBF_PAR_RELAY_PH``.
+
+    ``MBF_PAR_RELAY_PH`` selects the dosing configuration:
+    ``0`` = acid + base, ``1`` = acid only, ``2`` = base only. The
+    returned list is the ordered subset of :data:`PH_PUMP_STATUS_LABELS`
+    that is reachable under the current configuration.
+    """
+    relay_ph = data.get("MBF_PAR_RELAY_PH", 0) or 0
+    if relay_ph == 1:
+        return ["off", "idle", "acid"]
+    if relay_ph == 2:
+        return ["off", "idle", "base"]
+    return ["off", "idle", "acid", "base", "both"]
+
+
 __all__ = [
+    "CELL_BOOST_MODE_LABELS",
+    "FILTRATION_MODE_LABELS",
+    "FILTRATION_SPEED_LABELS",
+    "FILTRATION_SPEED_STATE_LABELS",
+    "FILTVALVE_MODE_LABELS",
+    "HIDRO_POLARITY_LABELS",
+    "ION_POLARITY_LABELS",
+    "PH_PUMP_STATUS_LABELS",
+    "PH_STATUS_ALARM_LABELS",
     "aggregate_filtration_remaining",
     "build_timer_block",
     "combine_u32",
@@ -493,14 +614,17 @@ __all__ = [
     "decode_cell_boost",
     "decode_filtration_mode",
     "decode_filtration_speed",
+    "decode_filtvalve_mode",
     "decode_hidro_polarity",
     "decode_ion_polarity",
     "decode_par_model_modules",
+    "decode_ph_alarm",
     "decode_ph_pump_status",
     "derive_timer_stop",
     "encode_cell_boost",
     "encode_filtration_mode",
     "encode_filtration_speed",
+    "encode_filtvalve_mode",
     "generate_time_options",
     "get_filtration_pump_type",
     "get_machine_name",
@@ -512,5 +636,6 @@ __all__ = [
     "pad_list",
     "parse_timer_block",
     "parse_version",
+    "ph_pump_options",
     "seconds_to_hhmm",
 ]
