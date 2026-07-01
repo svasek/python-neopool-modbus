@@ -459,6 +459,35 @@ def decode_ion_polarity(data: dict[str, Any]) -> str | None:
     return "off"
 
 
+# MBF_PH_STATUS bits 0-3 (mask 0x000F) encode a pH alarm state.
+# Values 0-5 come from the vendor Modbus spec; value 6 (tank level) is
+# emitted by real hardware when the acid/base tank runs dry and matches
+# the Tasmota driver's handling of the same register.
+PH_STATUS_ALARM_LABELS: dict[int, str] = {
+    0: "ok",
+    1: "ph_high",  # value 0.8 units above the high setpoint
+    2: "ph_low",  # value 0.8 units below the low setpoint
+    3: "pump_stopped",  # pH pump exceeded MBF_PAR_RELAY_PH_MAX_TIME
+    4: "ph_over",  # value above the high setpoint (fine band)
+    5: "ph_under",  # value below the low setpoint (fine band)
+    6: "tank_level",  # acid/base tank empty (float switch tripped)
+}
+
+
+def decode_ph_alarm(data: dict[str, Any]) -> str | None:
+    """Return the pH alarm label for MBF_PH_STATUS_ALARM, or ``None``.
+
+    Reads the ``MBF_PH_STATUS_ALARM`` snapshot key (which the client
+    already extracts from bits 0-3 of the ``MBF_PH_STATUS`` register)
+    and maps it via :data:`PH_STATUS_ALARM_LABELS`. Returns ``None``
+    when the key is missing or holds an unknown value.
+    """
+    value = data.get("MBF_PH_STATUS_ALARM")
+    if value is None:
+        return None
+    return PH_STATUS_ALARM_LABELS.get(int(value))
+
+
 def decode_ph_pump_status(data: dict[str, Any]) -> str | None:
     """Decode pH pump operational status from coordinator data snapshot."""
     ctrl = data.get("pH control module")
@@ -486,6 +515,7 @@ def decode_ph_pump_status(data: dict[str, Any]) -> str | None:
 
 
 __all__ = [
+    "PH_STATUS_ALARM_LABELS",
     "aggregate_filtration_remaining",
     "build_timer_block",
     "combine_u32",
@@ -496,6 +526,7 @@ __all__ = [
     "decode_hidro_polarity",
     "decode_ion_polarity",
     "decode_par_model_modules",
+    "decode_ph_alarm",
     "decode_ph_pump_status",
     "derive_timer_stop",
     "encode_cell_boost",

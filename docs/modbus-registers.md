@@ -171,6 +171,7 @@ Status of the pH control module. Bitmask:
 | 3     | pH pump (acid or base) exceeded the maximum working time set in `MBF_PAR_RELAY_PH_MAX_TIME` and has been stopped |
 | 4     | pH value is above PH1 setpoint                                                                                   |
 | 5     | pH value is below PH2 setpoint                                                                                   |
+| 6     | Acid or base tank empty (float switch tripped)                                                                   |
 
 **pH alarm values for acid-only regulation:**
 
@@ -182,6 +183,7 @@ Status of the pH control module. Bitmask:
 | 3     | pH pump exceeded maximum working time and has been stopped |
 | 4     | pH value is above PH1 setpoint + 0.1                       |
 | 5     | pH value is below PH1 setpoint - 0.3                       |
+| 6     | Acid tank empty (float switch tripped)                     |
 
 **pH alarm values for base-only regulation:**
 
@@ -193,6 +195,7 @@ Status of the pH control module. Bitmask:
 | 3     | pH pump exceeded maximum working time and has been stopped |
 | 4     | pH value is above PH2 setpoint + 0.1                       |
 | 5     | pH value is below PH2 setpoint - 0.3                       |
+| 6     | Base tank empty (float switch tripped)                     |
 
 ---
 

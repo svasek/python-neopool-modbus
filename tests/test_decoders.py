@@ -16,6 +16,7 @@
 import pytest
 
 from neopool_modbus.decoders import (
+    PH_STATUS_ALARM_LABELS,
     aggregate_filtration_remaining,
     build_timer_block,
     combine_u32,
@@ -26,6 +27,7 @@ from neopool_modbus.decoders import (
     decode_hidro_polarity,
     decode_ion_polarity,
     decode_par_model_modules,
+    decode_ph_alarm,
     decode_ph_pump_status,
     derive_timer_stop,
     encode_cell_boost,
@@ -978,3 +980,41 @@ def test_decode_ph_pump_status_idle() -> None:
         "MBF_PAR_RELAY_PH": 0,
     }
     assert decode_ph_pump_status(data) == "idle"
+
+
+# ---------------------------------------------------------------------------
+# decode_ph_alarm
+# ---------------------------------------------------------------------------
+
+
+def test_decode_ph_alarm_returns_none_when_key_missing() -> None:
+    assert decode_ph_alarm({}) is None
+
+
+def test_decode_ph_alarm_returns_none_when_value_is_none() -> None:
+    assert decode_ph_alarm({"MBF_PH_STATUS_ALARM": None}) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0, "ok"),
+        (1, "ph_high"),
+        (2, "ph_low"),
+        (3, "pump_stopped"),
+        (4, "ph_over"),
+        (5, "ph_under"),
+        (6, "tank_level"),
+    ],
+)
+def test_decode_ph_alarm_known_values(value: int, expected: str) -> None:
+    assert decode_ph_alarm({"MBF_PH_STATUS_ALARM": value}) == expected
+
+
+def test_decode_ph_alarm_unknown_value_returns_none() -> None:
+    assert decode_ph_alarm({"MBF_PH_STATUS_ALARM": 99}) is None
+
+
+def test_ph_status_alarm_labels_cover_documented_range() -> None:
+    """The label table must expose every value from 0 through 6."""
+    assert set(PH_STATUS_ALARM_LABELS) == {0, 1, 2, 3, 4, 5, 6}
