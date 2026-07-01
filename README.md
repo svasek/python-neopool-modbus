@@ -202,21 +202,37 @@ from neopool_modbus.capabilities import (
     is_uv_lamp_present,
 )
 from neopool_modbus.decoders import (
+    CELL_BOOST_MODE_LABELS,
+    FILTRATION_MODE_LABELS,
+    FILTRATION_SPEED_LABELS,
+    FILTRATION_SPEED_STATE_LABELS,
+    FILTVALVE_MODE_LABELS,
+    HIDRO_POLARITY_LABELS,
+    ION_POLARITY_LABELS,
+    PH_PUMP_STATUS_LABELS,
+    PH_STATUS_ALARM_LABELS,
     aggregate_filtration_remaining,
     build_timer_block,
     combine_u32,
     decode_cell_boost,
     decode_filtration_mode,
     decode_filtration_speed,
+    decode_filtvalve_mode,
+    decode_hidro_polarity,
+    decode_ion_polarity,
     decode_par_model_modules,
+    decode_ph_alarm,
+    decode_ph_pump_status,
     derive_timer_stop,
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
+    encode_filtvalve_mode,
     get_machine_name,
     hhmm_to_seconds,
     is_hydrolysis_in_percent,
     parse_timer_block,
+    ph_pump_options,
     seconds_to_hhmm,
     # ... see neopool_modbus.decoders for the full list
 )
@@ -228,6 +244,42 @@ from neopool_modbus.status_mask import (
     decode_ion_status_bits,
     decode_ph_rx_cl_cd_status_bits,
 )
+```
+
+### Enum labels
+
+The `decoders` module publishes the label collections that pair with
+each enum-shaped decoder, so integrations do not have to duplicate the
+mappings in their own UI code:
+
+| Collection                      | Type              | Pairs with                                            |
+| ------------------------------- | ----------------- | ----------------------------------------------------- |
+| `FILTRATION_MODE_LABELS`        | `dict[int, str]`  | `decode_filtration_mode` / `encode_filtration_mode`   |
+| `FILTRATION_SPEED_LABELS`       | `dict[int, str]`  | `decode_filtration_speed` / `encode_filtration_speed` |
+| `CELL_BOOST_MODE_LABELS`        | `dict[int, str]`  | `decode_cell_boost` / `encode_cell_boost`             |
+| `FILTVALVE_MODE_LABELS`         | `dict[int, str]`  | `decode_filtvalve_mode` / `encode_filtvalve_mode`     |
+| `PH_STATUS_ALARM_LABELS`        | `dict[int, str]`  | `decode_ph_alarm`                                     |
+| `FILTRATION_SPEED_STATE_LABELS` | `tuple[str, ...]` | return values of `compute_filtration_speed_state`     |
+| `HIDRO_POLARITY_LABELS`         | `tuple[str, ...]` | return values of `decode_hidro_polarity`              |
+| `ION_POLARITY_LABELS`           | `tuple[str, ...]` | return values of `decode_ion_polarity`                |
+| `PH_PUMP_STATUS_LABELS`         | `tuple[str, ...]` | return values of `decode_ph_pump_status`              |
+
+Dict-shaped collections use the wire value as the key; tuple-shaped
+ones enumerate the string outputs of a pure decoder that reads more
+than one register. The `ph_pump_options(data)` helper returns the
+subset of `PH_PUMP_STATUS_LABELS` reachable under the current
+`MBF_PAR_RELAY_PH` mode (acid-only / base-only / both).
+
+```python
+from neopool_modbus.decoders import (
+    FILTRATION_MODE_LABELS,
+    decode_filtration_mode,
+    ph_pump_options,
+)
+
+modes = list(FILTRATION_MODE_LABELS.values())   # ("manual", "auto", ...)
+current = decode_filtration_mode(data.get("MBF_PAR_FILT_MODE"))
+options = ph_pump_options(data)                 # narrowed by MBF_PAR_RELAY_PH
 ```
 
 ### Capabilities
@@ -259,16 +311,16 @@ The client exposes named operations for the writes integrations
 typically need, so callers do not have to reach for raw register
 addresses:
 
-| Method                                         | Effect                                                                                |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `async_set_filtration_mode(name, apply=True)`  | manual / auto / heating / smart / intelligent / backwash                              |
-| `async_set_cell_boost(name, apply=True)`       | inactive / active / active_redox                                                 |
-| `async_set_filtration_speed(name, apply=False)`| low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
-| `async_set_temp_setpoint(raw, apply=True)`     | writes the same scaled value to heating + intelligent registers in sync                |
-| `async_clear_errors()`                         | one-shot to `MBF_ESCAPE`                                                              |
-| `async_save_to_eeprom()`                       | one-shot to `MBF_SAVE_TO_EEPROM`                                                      |
-| `async_reset_user_counters()`                  | resets user counters and chains the EEPROM save (the reset is volatile)                |
-| `async_sync_device_time(timestamp)`            | writes the 32-bit `timestamp` to `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`  |
+| Method                                          | Effect                                                                                    |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                  |
+| `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                          |
+| `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
+| `async_set_temp_setpoint(raw, apply=True)`      | writes the same scaled value to heating + intelligent registers in sync                   |
+| `async_clear_errors()`                          | one-shot to `MBF_ESCAPE`                                                                  |
+| `async_save_to_eeprom()`                        | one-shot to `MBF_SAVE_TO_EEPROM`                                                          |
+| `async_reset_user_counters()`                   | resets user counters and chains the EEPROM save (the reset is volatile)                   |
+| `async_sync_device_time(timestamp)`             | writes the 32-bit `timestamp` to `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`     |
 
 Unknown mode/speed names raise `ValueError` before any I/O happens.
 
@@ -282,12 +334,12 @@ All client methods translate underlying pymodbus exceptions into the
 `NeoPoolError` hierarchy at the library boundary, so callers never need
 to import `pymodbus` to catch errors:
 
-| Class                    | Raised when                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `NeoPoolConnectionError` | TCP connect fails, returned `False`, or the client is in its post-failure backoff |
-| `NeoPoolTimeoutError`    | Connect, read, or write times out (`asyncio.TimeoutError`)                       |
+| Class                    | Raised when                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NeoPoolConnectionError` | TCP connect fails, returned `False`, or the client is in its post-failure backoff                                                                 |
+| `NeoPoolTimeoutError`    | Connect, read, or write times out (`asyncio.TimeoutError`)                                                                                        |
 | `NeoPoolModbusError`     | A read returns a Modbus exception response (`isError()` true), or `async_write_aux_relay` / one of the timer write follow-ups returns `isError()` |
-| `NeoPoolError`           | Common base; catch this to handle any of the above                                |
+| `NeoPoolError`           | Common base; catch this to handle any of the above                                                                                                |
 
 > ⚠️ `NeoPoolModbusClient.async_write_register()` is the exception to the
 > table above: it returns `None` (rather than raising) on `isError()` so
