@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0](https://github.com/svasek/python-neopool-modbus/compare/v3.4.1...v3.5.0) (2026-07-01)
+
+
+### ✨ Features
+
+* **decoders:** ✨ expose label collections and add ph alarm / filtvalve codecs ([#31](https://github.com/svasek/python-neopool-modbus/issues/31)) ([468db01](https://github.com/svasek/python-neopool-modbus/commit/468db016a0b114ec84314996f388f9b88b4e6a10))
+
 ## [3.4.1](https://github.com/svasek/python-neopool-modbus/compare/v3.4.0...v3.4.1) (2026-06-18)
 
 
