@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from neopool_modbus.decoders import (
@@ -27,6 +29,7 @@ from neopool_modbus.decoders import (
     PH_STATUS_ALARM_LABELS,
     aggregate_filtration_remaining,
     build_timer_block,
+    calculate_next_interval_time,
     combine_u32,
     compute_filtration_speed_state,
     decode_cell_boost,
@@ -1227,3 +1230,48 @@ def test_parse_register_int_hex_string_out_of_range() -> None:
     """Hex strings that overflow the register width are rejected."""
     with pytest.raises(ValueError, match="out of range"):
         parse_register_int("0x10000")
+
+
+# --- calculate_next_interval_time tests ---
+
+
+def test_calculate_next_interval_time_returns_utc_truncated_to_minute() -> None:
+    """Result is UTC-aware and has zero seconds / microseconds."""
+    result = calculate_next_interval_time(3600)
+    assert result is not None
+    assert result.tzinfo is UTC
+    assert result.second == 0
+    assert result.microsecond == 0
+
+
+def test_calculate_next_interval_time_offsets_from_now_by_default() -> None:
+    """When no ``now`` is passed, the target is close to ``datetime.now(UTC) + seconds``."""
+    result = calculate_next_interval_time(7200)
+    assert result is not None
+    expected = (datetime.now(UTC) + timedelta(seconds=7200)).replace(
+        second=0, microsecond=0
+    )
+    assert abs((result - expected).total_seconds()) < 60
+
+
+def test_calculate_next_interval_time_uses_injected_now() -> None:
+    """A caller-supplied ``now`` fully replaces the clock read."""
+    fixed_now = datetime(2026, 7, 2, 12, 34, 56, 789, tzinfo=UTC)
+    result = calculate_next_interval_time(3600, now=fixed_now)
+    assert result == datetime(2026, 7, 2, 13, 34, 0, tzinfo=UTC)
+
+
+def test_calculate_next_interval_time_truncates_downwards() -> None:
+    """Fractional seconds are dropped, never rounded up."""
+    fixed_now = datetime(2026, 7, 2, 12, 59, 59, 999_999, tzinfo=UTC)
+    # 1 second later -> 13:00:00.999999 -> truncated to 13:00:00
+    result = calculate_next_interval_time(1, now=fixed_now)
+    assert result == datetime(2026, 7, 2, 13, 0, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("invalid", [0, -100, -0.5, None])
+def test_calculate_next_interval_time_invalid_input(
+    invalid: float | None,
+) -> None:
+    """Zero, negative, or ``None`` return ``None``."""
+    assert calculate_next_interval_time(invalid) is None

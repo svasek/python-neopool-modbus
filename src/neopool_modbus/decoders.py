@@ -20,6 +20,7 @@ They have no I/O, no Home Assistant dependencies, and no global state.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 
@@ -67,6 +68,30 @@ def parse_register_int(raw: object) -> int:
     if not 0 <= val <= 0xFFFF:
         raise ValueError(f"register value out of range 0..0xFFFF: {val}")
     return val
+
+
+def calculate_next_interval_time(
+    seconds: float | None, *, now: datetime | None = None
+) -> datetime | None:
+    """Return the UTC timestamp for the next interval start, truncated to the minute.
+
+    ``seconds`` is the offset from ``now`` (or the current UTC time when ``now``
+    is ``None``). ``None`` or non-positive values return ``None``, matching how
+    the NeoPool firmware encodes "no next interval scheduled".
+
+    The returned datetime has ``second=0`` and ``microsecond=0`` so consumers
+    can render or compare it without dealing with sub-minute jitter that would
+    otherwise change on every poll. Callers who need sub-minute precision
+    should compute the offset themselves.
+
+    Pass ``now`` (must be timezone-aware) to inject a fixed reference time,
+    typically for testing without freezing the clock.
+    """
+    if not seconds or seconds <= 0:
+        return None
+    reference = now if now is not None else datetime.now(UTC)
+    target = reference + timedelta(seconds=seconds)
+    return target.replace(second=0, microsecond=0)
 
 
 def combine_u32(low: int | None, high: int | None) -> int | None:
@@ -646,6 +671,7 @@ __all__ = [
     "PH_STATUS_ALARM_LABELS",
     "aggregate_filtration_remaining",
     "build_timer_block",
+    "calculate_next_interval_time",
     "combine_u32",
     "compute_filtration_speed_state",
     "decode_cell_boost",
