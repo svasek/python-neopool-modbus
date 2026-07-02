@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0](https://github.com/svasek/python-neopool-modbus/compare/v3.5.0...v3.6.0) (2026-07-02)
+
+
+### ✨ Features
+
+* **decoders:** ✨ add calculate_next_interval_time helper ([#37](https://github.com/svasek/python-neopool-modbus/issues/37)) ([e489a88](https://github.com/svasek/python-neopool-modbus/commit/e489a8884d70af5a8fa3b8497f5cdced70504d2f))
+* **decoders:** ✨ add device time codec ([#38](https://github.com/svasek/python-neopool-modbus/issues/38)) ([eff733d](https://github.com/svasek/python-neopool-modbus/commit/eff733d483a569883ca3954c1e13eaa1086327e5))
+* **decoders:** ✨ add parse_register_int helper ([#36](https://github.com/svasek/python-neopool-modbus/issues/36)) ([64cd80a](https://github.com/svasek/python-neopool-modbus/commit/64cd80a9b0c438d6cc41c384345f0a21b1319ff3))
+* **registers:** ✨ add find_corrupted_gpio_registers helper ([#34](https://github.com/svasek/python-neopool-modbus/issues/34)) ([0ba247b](https://github.com/svasek/python-neopool-modbus/commit/0ba247b61aaceb5f167ed7a54b2fb92f9b6560e7))
+
 ## [3.5.0](https://github.com/svasek/python-neopool-modbus/compare/v3.4.1...v3.5.0) (2026-07-01)
 
 
