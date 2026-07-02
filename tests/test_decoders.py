@@ -13,7 +13,8 @@
 # limitations under the License.
 
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -33,6 +34,7 @@ from neopool_modbus.decoders import (
     combine_u32,
     compute_filtration_speed_state,
     decode_cell_boost,
+    decode_device_time,
     decode_filtration_mode,
     decode_filtration_speed,
     decode_filtvalve_mode,
@@ -43,6 +45,7 @@ from neopool_modbus.decoders import (
     decode_ph_pump_status,
     derive_timer_stop,
     encode_cell_boost,
+    encode_device_time,
     encode_filtration_mode,
     encode_filtration_speed,
     encode_filtvalve_mode,
@@ -1275,3 +1278,83 @@ def test_calculate_next_interval_time_invalid_input(
 ) -> None:
     """Zero, negative, or ``None`` return ``None``."""
     assert calculate_next_interval_time(invalid) is None
+
+
+# --- decode_device_time / encode_device_time tests ---
+
+
+def test_decode_device_time_none_returns_none() -> None:
+    """A missing register decodes to None."""
+    assert decode_device_time(None, UTC) is None
+
+
+def test_decode_device_time_at_epoch_in_utc() -> None:
+    """Zero seconds in UTC decodes to 1970-01-01 00:00 UTC."""
+    result = decode_device_time(0, UTC)
+    assert result == datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def test_decode_device_time_fixed_offset() -> None:
+    """A fixed +02:00 offset shifts the wall-clock two hours behind UTC."""
+    # Encode 2026-07-02 12:00 in a +02:00 tz -> UTC is 10:00.
+    tz = timezone(timedelta(hours=2))
+    epoch_local = datetime(1970, 1, 1, tzinfo=tz)
+    unix_ts = int(
+        (datetime(2026, 7, 2, 12, 0, tzinfo=tz) - epoch_local).total_seconds()
+    )
+    result = decode_device_time(unix_ts, tz)
+    assert result == datetime(2026, 7, 2, 10, 0, tzinfo=UTC)
+
+
+def test_decode_device_time_zoneinfo_dst() -> None:
+    """Europe/Prague in July is +02:00, so 14:00 wall-clock -> 12:00 UTC."""
+    tz = ZoneInfo("Europe/Prague")
+    epoch_local = datetime(1970, 1, 1, tzinfo=tz)
+    unix_ts = int(
+        (datetime(2026, 7, 2, 14, 0, tzinfo=tz) - epoch_local).total_seconds()
+    )
+    result = decode_device_time(unix_ts, tz)
+    assert result == datetime(2026, 7, 2, 12, 0, tzinfo=UTC)
+
+
+def test_encode_device_time_rejects_naive() -> None:
+    """A naive datetime cannot be encoded (ambiguous)."""
+    naive = datetime(2026, 7, 2, 12, 0)  # noqa: DTZ001
+    with pytest.raises(ValueError, match="timezone-aware"):
+        encode_device_time(naive)
+
+
+def test_encode_device_time_utc_at_epoch() -> None:
+    """1970-01-01 00:00 UTC encodes to 0."""
+    assert encode_device_time(datetime(1970, 1, 1, tzinfo=UTC)) == 0
+
+
+def test_encode_device_time_fixed_offset() -> None:
+    """A tz-aware wall-clock encodes to the seconds-since-1970 in its own tz."""
+    tz = timezone(timedelta(hours=2))
+    result = encode_device_time(datetime(2026, 7, 2, 12, 0, tzinfo=tz))
+    expected = int(
+        datetime(2026, 7, 2, 12, 0, tzinfo=tz).timestamp()
+        - datetime(1970, 1, 1, tzinfo=tz).timestamp()
+    )
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    "tz",
+    [
+        UTC,
+        timezone(timedelta(hours=2)),
+        timezone(timedelta(hours=-5)),
+        ZoneInfo("Europe/Prague"),
+        ZoneInfo("America/New_York"),
+    ],
+)
+def test_device_time_round_trip(tz: object) -> None:
+    """encode -> decode returns the original wall-clock time in the same tz."""
+    original = datetime(2026, 7, 2, 14, 30, tzinfo=tz)  # type: ignore[arg-type]
+    encoded = encode_device_time(original)
+    decoded = decode_device_time(encoded, tz)  # type: ignore[arg-type]
+    assert decoded is not None
+    # Both are UTC-aware datetimes for the same instant.
+    assert decoded == original.astimezone(UTC)
