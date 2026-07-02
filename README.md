@@ -217,6 +217,7 @@ from neopool_modbus.decoders import (
     PH_STATUS_ALARM_LABELS,
     aggregate_filtration_remaining,
     build_timer_block,
+    calculate_next_interval_time,
     combine_u32,
     decode_cell_boost,
     decode_filtration_mode,
