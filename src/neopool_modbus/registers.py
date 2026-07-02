@@ -21,7 +21,9 @@ them via re-export.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import IntEnum
+from typing import Any
 
 # Default Modbus framer used when reading from a TCP gateway.
 #   "tcp" -- standard Modbus TCP (MBAP header)
@@ -188,6 +190,25 @@ def is_valid_relay_gpio(gpio: int) -> bool:
     return 1 <= gpio <= MAX_RELAY_GPIO
 
 
+def find_corrupted_gpio_registers(
+    data: Mapping[str, Any],
+) -> list[tuple[str, str, int]]:
+    """Return every ``GPIO_REGISTERS`` entry whose value is outside 0..MAX_RELAY_GPIO.
+
+    Value 0 means "unassigned" and is valid; 1..MAX_RELAY_GPIO map to a physical relay.
+    A value outside this range indicates register corruption (e.g. framer mismatch).
+    Missing keys and ``None`` values are skipped.
+
+    Returns a list of ``(register_key, human_label, actual_value)`` tuples; empty
+    when every GPIO register is valid.
+    """
+    return [
+        (key, label, value)
+        for key, label in GPIO_REGISTERS.items()
+        if (value := data.get(key)) is not None and not (0 <= value <= MAX_RELAY_GPIO)
+    ]
+
+
 # Timer blocks 0x0434-0x04E8 are read in groups of 15 registers due to the
 # device's per-request limit.
 TIMER_BLOCKS = {
@@ -272,6 +293,7 @@ __all__ = [
     "TIMER_BLOCKS",
     "TimerRelayMode",
     "UV_MODE_REGISTER",
+    "find_corrupted_gpio_registers",
     "is_input_register",
     "is_valid_relay_gpio",
 ]

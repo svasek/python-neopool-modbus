@@ -181,6 +181,7 @@ from neopool_modbus.registers import (
     STOP_ALL_MODULES_REGISTER,
     TIMER_BLOCKS,
     UV_MODE_REGISTER,
+    find_corrupted_gpio_registers,
     is_input_register,
     is_valid_relay_gpio,
 )

@@ -14,7 +14,12 @@
 
 import pytest
 
-from neopool_modbus.registers import is_input_register, is_valid_relay_gpio
+from neopool_modbus.registers import (
+    MAX_RELAY_GPIO,
+    find_corrupted_gpio_registers,
+    is_input_register,
+    is_valid_relay_gpio,
+)
 from neopool_modbus.status_mask import (
     decode_hidro_status_bits,
     decode_ion_status_bits,
@@ -131,6 +136,50 @@ def test_is_valid_relay_gpio_valid():
 def test_is_valid_relay_gpio_invalid():
     for gpio in (0, -1, 8, 16, 255):
         assert is_valid_relay_gpio(gpio) is False
+
+
+# --- find_corrupted_gpio_registers tests ---
+
+
+def test_find_corrupted_gpio_registers_empty_data():
+    """No GPIO keys present means nothing to report."""
+    assert find_corrupted_gpio_registers({}) == []
+
+
+def test_find_corrupted_gpio_registers_all_valid():
+    """Values inside 0..MAX_RELAY_GPIO (incl. 0 = unassigned) are silent."""
+    data = {
+        "MBF_PAR_FILT_GPIO": 0,
+        "MBF_PAR_LIGHTING_GPIO": 1,
+        "MBF_PAR_HEATING_GPIO": MAX_RELAY_GPIO,
+    }
+    assert find_corrupted_gpio_registers(data) == []
+
+
+def test_find_corrupted_gpio_registers_none_and_missing_are_skipped():
+    """``None`` values and absent keys are not treated as corruption."""
+    data = {"MBF_PAR_FILT_GPIO": None}
+    assert find_corrupted_gpio_registers(data) == []
+
+
+@pytest.mark.parametrize("bad_value", [-1, MAX_RELAY_GPIO + 1, 42, 0xFFFF])
+def test_find_corrupted_gpio_registers_flags_out_of_range(bad_value: int) -> None:
+    """Values outside 0..MAX_RELAY_GPIO surface with key, label, and raw value."""
+    data = {"MBF_PAR_FILT_GPIO": bad_value}
+    result = find_corrupted_gpio_registers(data)
+    assert result == [("MBF_PAR_FILT_GPIO", "Filtration relay", bad_value)]
+
+
+def test_find_corrupted_gpio_registers_reports_all_offenders():
+    """Every corrupted key appears in the returned list."""
+    data = {
+        "MBF_PAR_FILT_GPIO": MAX_RELAY_GPIO + 1,
+        "MBF_PAR_LIGHTING_GPIO": 3,  # valid
+        "MBF_PAR_HEATING_GPIO": -1,
+    }
+    result = find_corrupted_gpio_registers(data)
+    keys = {key for key, _, _ in result}
+    assert keys == {"MBF_PAR_FILT_GPIO", "MBF_PAR_HEATING_GPIO"}
 
 
 # --- is_input_register tests ---
