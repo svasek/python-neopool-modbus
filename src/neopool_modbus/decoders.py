@@ -32,6 +32,43 @@ def parse_version(val: int | str | None) -> str:
     return "?"
 
 
+def parse_register_int(raw: object) -> int:
+    """Parse a Modbus register value from an ``int`` or a decimal/hex ``str``.
+
+    Accepts:
+
+    - ``int`` in the range ``0..0xFFFF``.
+    - ``str`` in decimal (``"1539"``) or hex-prefixed (``"0x0603"``, ``"0X603"``).
+      Whitespace is not stripped; the caller is responsible for normalisation.
+
+    Rejects (raises :class:`ValueError`):
+
+    - ``bool``: even though ``isinstance(True, int)`` is ``True`` in Python,
+      it is almost never what a caller means when parsing a register value.
+    - ``float``: silent truncation would lose information; reject explicitly.
+    - Any other type, or a value outside ``0..0xFFFF``.
+
+    Callers that need domain-specific error translation (e.g. a Home Assistant
+    ``ServiceValidationError``) should catch :class:`ValueError` and re-raise.
+    """
+    if isinstance(raw, bool):
+        raise ValueError(f"register value must not be a bool: {raw!r}")
+    if isinstance(raw, float):
+        raise ValueError(f"register value must not be a float: {raw!r}")
+    if isinstance(raw, str):
+        try:
+            val = int(raw, 0)
+        except ValueError as err:
+            raise ValueError(f"cannot parse register value: {raw!r}") from err
+    elif isinstance(raw, int):
+        val = raw
+    else:
+        raise ValueError(f"unsupported register value type: {type(raw).__name__}")
+    if not 0 <= val <= 0xFFFF:
+        raise ValueError(f"register value out of range 0..0xFFFF: {val}")
+    return val
+
+
 def combine_u32(low: int | None, high: int | None) -> int | None:
     """Return ``(high << 16) | low``, or ``None`` if either half is missing."""
     if low is None or high is None:
@@ -634,6 +671,7 @@ __all__ = [
     "modbus_regs_to_ascii",
     "modbus_regs_to_hex_string",
     "pad_list",
+    "parse_register_int",
     "parse_timer_block",
     "parse_version",
     "ph_pump_options",

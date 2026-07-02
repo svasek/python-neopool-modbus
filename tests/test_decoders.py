@@ -52,6 +52,7 @@ from neopool_modbus.decoders import (
     modbus_regs_to_ascii,
     modbus_regs_to_hex_string,
     pad_list,
+    parse_register_int,
     parse_timer_block,
     parse_version,
     ph_pump_options,
@@ -1163,3 +1164,66 @@ def test_ph_pump_options_acid_only() -> None:
 
 def test_ph_pump_options_base_only() -> None:
     assert ph_pump_options({"MBF_PAR_RELAY_PH": 2}) == ["off", "idle", "base"]
+
+
+# --- parse_register_int tests ---
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (0, 0),
+        (1539, 1539),
+        (0xFFFF, 0xFFFF),
+        ("0", 0),
+        ("1539", 1539),
+        ("65535", 65535),
+        ("0x0603", 0x0603),
+        ("0X0603", 0x0603),
+        ("0xFFFF", 0xFFFF),
+    ],
+)
+def test_parse_register_int_valid(raw: object, expected: int) -> None:
+    """Valid ``int`` and decimal/hex strings parse to the expected value."""
+    assert parse_register_int(raw) == expected
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_parse_register_int_rejects_bool(bad: bool) -> None:
+    """``bool`` inputs are rejected even though ``isinstance(True, int)`` is True."""
+    with pytest.raises(ValueError, match="must not be a bool"):
+        parse_register_int(bad)
+
+
+@pytest.mark.parametrize("bad", [1.0, -0.5, 3.14])
+def test_parse_register_int_rejects_float(bad: float) -> None:
+    """``float`` inputs are rejected to avoid silent truncation."""
+    with pytest.raises(ValueError, match="must not be a float"):
+        parse_register_int(bad)
+
+
+@pytest.mark.parametrize("bad", ["abc", "0xZZ", "1.5", ""])
+def test_parse_register_int_rejects_unparsable_string(bad: str) -> None:
+    """Non-numeric strings raise ``ValueError``."""
+    with pytest.raises(ValueError, match="cannot parse register value"):
+        parse_register_int(bad)
+
+
+@pytest.mark.parametrize("bad", [None, [], (), {"a": 1}, object()])
+def test_parse_register_int_rejects_unsupported_types(bad: object) -> None:
+    """Types other than ``int``/``str`` raise ``ValueError``."""
+    with pytest.raises(ValueError, match="unsupported register value type"):
+        parse_register_int(bad)
+
+
+@pytest.mark.parametrize("bad", [-1, 0x10000, 65536, -100])
+def test_parse_register_int_out_of_range(bad: int) -> None:
+    """Values outside ``0..0xFFFF`` raise ``ValueError``."""
+    with pytest.raises(ValueError, match="out of range"):
+        parse_register_int(bad)
+
+
+def test_parse_register_int_hex_string_out_of_range() -> None:
+    """Hex strings that overflow the register width are rejected."""
+    with pytest.raises(ValueError, match="out of range"):
+        parse_register_int("0x10000")
