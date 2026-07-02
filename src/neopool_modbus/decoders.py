@@ -20,7 +20,7 @@ They have no I/O, no Home Assistant dependencies, and no global state.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 
@@ -92,6 +92,48 @@ def calculate_next_interval_time(
     reference = now if now is not None else datetime.now(UTC)
     target = reference + timedelta(seconds=seconds)
     return target.replace(second=0, microsecond=0)
+
+
+def decode_device_time(unix_ts: int | None, tz: tzinfo) -> datetime | None:
+    """Decode ``MBF_PAR_TIME`` to a timezone-aware UTC datetime.
+
+    The NeoPool firmware has no timezone concept. It stores the value in
+    ``MBF_PAR_TIME`` as seconds since the Unix epoch, but interprets that
+    number as *wall-clock time in the local timezone* rather than as a real
+    Unix timestamp. Callers pass the target timezone (typically the user's
+    Home Assistant timezone); the return value is normalised to UTC so that
+    downstream code can compare it against ``datetime.now(UTC)`` without
+    special-casing the device's TZ-less encoding.
+
+    Returns ``None`` when the register is absent (``unix_ts is None``).
+    """
+    if unix_ts is None:
+        return None
+    # Intentionally naive: the device stores the value as if it were UTC seconds,
+    # but the digits themselves represent the wall-clock in ``tz``. The naive
+    # datetime is then re-labelled with ``tz`` (not converted) and normalised
+    # to UTC. See docstring above.
+    dt_naive = datetime(1970, 1, 1) + timedelta(seconds=unix_ts)  # noqa: DTZ001
+    dt_local = dt_naive.replace(tzinfo=tz)
+    return dt_local.astimezone(UTC)
+
+
+def encode_device_time(now: datetime) -> int:
+    """Encode a timezone-aware datetime as a ``MBF_PAR_TIME`` register value.
+
+    The inverse of :func:`decode_device_time`. Given a timezone-aware
+    reference datetime, return the seconds-since-1970 value the device
+    expects, so that after the write the device displays the correct
+    wall-clock time in the same timezone as ``now``.
+
+    Raises :class:`ValueError` when ``now`` is naive (no ``tzinfo``); a naive
+    subtraction against a tz-aware epoch would otherwise fail with a
+    :class:`TypeError` at runtime.
+    """
+    if now.tzinfo is None:
+        raise ValueError("device time must be timezone-aware")
+    epoch_local = datetime(1970, 1, 1, tzinfo=now.tzinfo)
+    return int((now - epoch_local).total_seconds())
 
 
 def combine_u32(low: int | None, high: int | None) -> int | None:
@@ -675,6 +717,7 @@ __all__ = [
     "combine_u32",
     "compute_filtration_speed_state",
     "decode_cell_boost",
+    "decode_device_time",
     "decode_filtration_mode",
     "decode_filtration_speed",
     "decode_filtvalve_mode",
@@ -685,6 +728,7 @@ __all__ = [
     "decode_ph_pump_status",
     "derive_timer_stop",
     "encode_cell_boost",
+    "encode_device_time",
     "encode_filtration_mode",
     "encode_filtration_speed",
     "encode_filtvalve_mode",
