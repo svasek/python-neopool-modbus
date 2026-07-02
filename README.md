@@ -235,6 +235,7 @@ from neopool_modbus.decoders import (
     get_machine_name,
     hhmm_to_seconds,
     is_hydrolysis_in_percent,
+    parse_register_int,
     parse_timer_block,
     ph_pump_options,
     seconds_to_hhmm,
