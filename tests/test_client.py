@@ -3212,6 +3212,8 @@ async def test_async_set_manual_filtration_propagates_connection_error(config):
         neopool_modbus.SetpointKind.REDOX,
         neopool_modbus.SetpointKind.CHLORINE,
         neopool_modbus.SetpointKind.HIDRO,
+        neopool_modbus.SetpointKind.SMART_TEMP_HIGH,
+        neopool_modbus.SetpointKind.SMART_TEMP_LOW,
     ],
 )
 @pytest.mark.asyncio
@@ -3224,7 +3226,25 @@ async def test_async_set_setpoint_writes_expected_register(config, kind):
     result = await client.async_set_setpoint(kind, 250)
 
     assert result == {data_key: 250}
-    client.async_write_register.assert_awaited_once_with(register, 250)
+    client.async_write_register.assert_awaited_once_with(register, 250, apply=False)
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.asyncio
+async def test_async_set_setpoint_forwards_apply_kwarg(config, apply):
+    """``apply`` is forwarded to ``async_write_register`` so callers can batch writes."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.HEATING
+    ]
+
+    result = await client.async_set_setpoint(
+        neopool_modbus.SetpointKind.HEATING, 250, apply=apply
+    )
+
+    assert result == {data_key: 250}
+    client.async_write_register.assert_awaited_once_with(register, 250, apply=apply)
 
 
 @pytest.mark.asyncio

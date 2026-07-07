@@ -1277,23 +1277,29 @@ class NeoPoolModbusClient:
         )
 
     async def async_set_setpoint(
-        self, kind: SetpointKind, value: int
+        self, kind: SetpointKind, value: int, apply: bool = False
     ) -> dict[str, Any]:
         """Write *value* to the register that backs *kind*.
 
-        Covers heating, intelligent, pH max/min, redox, chlorine and
-        hydrolysis setpoints via a single entry point so callers do not
-        need to import the individual register addresses. *value* is the
-        already-scaled register value (e.g. 250 for 25.0 °C, 750 for
-        pH 7.50); the method performs no range validation.
+        Covers heating, intelligent, pH max/min, redox, chlorine,
+        hydrolysis and smart-temp setpoints via a single entry point so
+        callers do not need to import the individual register addresses.
+        *value* is the already-scaled register value (e.g. 250 for
+        25.0 °C, 750 for pH 7.50); the method performs no range
+        validation.
+
+        ``apply`` defaults to False for a volatile write; pass True to
+        commit the change to EEPROM and restart the affected modules.
+        This is useful for batching several volatile writes and
+        committing them together with a final ``apply=True`` call.
 
         Returns an optimistic-update dict of the coordinator-data key the
         caller can merge into its own cache without knowing the register
         layout.
         """
         register, data_key = _SETPOINT_LAYOUT[kind]
-        await self.async_write_register(register, value)
-        _LOGGER.debug("Setpoint %s written: %s", kind.name, value)
+        await self.async_write_register(register, value, apply=apply)
+        _LOGGER.debug("Setpoint %s written: %s (apply=%s)", kind.name, value, apply)
         return {data_key: value}
 
     async def async_set_masked_register(
