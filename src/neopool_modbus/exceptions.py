@@ -45,9 +45,21 @@ class NeoPoolModbusError(NeoPoolError):
     """
 
 
+class NeoPoolInvalidStateError(NeoPoolError):
+    """Raised when the device is in a state that rejects the requested operation.
+
+    Distinct from :class:`NeoPoolModbusError` (which indicates a
+    protocol-level failure) and :class:`NeoPoolConnectionError` (transport
+    issue). Callers can catch this to translate into user-facing messages
+    ("device is in auto mode, cannot control manually") without conflating
+    a legitimate state with a hardware fault.
+    """
+
+
 __all__ = [
     "NeoPoolConnectionError",
     "NeoPoolError",
+    "NeoPoolInvalidStateError",
     "NeoPoolModbusError",
     "NeoPoolTimeoutError",
 ]

@@ -39,6 +39,75 @@ class TimerRelayMode(IntEnum):
     ALWAYS_OFF = 4  # MBV_PAR_CTIMER_ALWAYS_OFF
 
 
+class RelayKind(IntEnum):
+    """Identifier for a controllable relay.
+
+    Callers use this instead of raw register addresses; the library
+    resolves the register layout internally via :data:`_RELAY_LAYOUT`.
+    """
+
+    LIGHT = 0
+    AUX1 = 1
+    AUX2 = 2
+    AUX3 = 3
+    AUX4 = 4
+
+
+class RelayMode(IntEnum):
+    """High-level relay mode exposed by :meth:`async_set_relay_mode`.
+
+    Mirrors :class:`TimerRelayMode` but presents a single enum for both
+    manual states (ALWAYS_ON / ALWAYS_OFF) and the automatic (timer-driven)
+    mode. ``AUTO`` corresponds to :attr:`TimerRelayMode.ENABLED`.
+    """
+
+    AUTO = 1
+    ALWAYS_ON = 3
+    ALWAYS_OFF = 4
+
+
+class BinaryConfigFlag(IntEnum):
+    """Configuration flags backed by a dedicated on/off register."""
+
+    CLIMA_ONOFF = 0
+    SMART_ANTI_FREEZE = 1
+    UV_MODE = 2
+
+
+class BitmaskConfigFlag(IntEnum):
+    """Configuration flags packed as bits inside a shared register.
+
+    Both flags live in :data:`HIDRO_COVER_ENABLE_REGISTER` (0x042C).
+    """
+
+    HIDRO_COVER_ENABLE = 0
+    HIDRO_TEMP_SHUTDOWN = 1
+
+
+class SetpointKind(IntEnum):
+    """Identifier for a device setpoint written via :meth:`async_set_setpoint`."""
+
+    HEATING = 0
+    INTELLIGENT = 1
+    PH_MAX = 2
+    PH_MIN = 3
+    REDOX = 4
+    CHLORINE = 5
+    HIDRO = 6
+
+
+class MaskedFlag(IntEnum):
+    """Identifier for a value packed into a shared register with a bitmask.
+
+    Both flags live in :data:`HIDRO_COVER_REGISTER` (0x042D):
+    ``HIDRO_COVER_REDUCTION_PERCENT`` occupies bits 0-7 (0-100 %),
+    ``HIDRO_SHUTDOWN_TEMPERATURE`` occupies bits 8-15 (0-40 °C).
+    """
+
+    HIDRO_COVER_REDUCTION_PERCENT = 0
+    HIDRO_SHUTDOWN_TEMPERATURE = 1
+
+
 # Single-register write addresses with special semantics.
 MANUAL_FILTRATION_REGISTER = 0x0413
 EEPROM_SAVE_REGISTER = 0x02F0  # MBF_SAVE_TO_EEPROM
@@ -113,6 +182,12 @@ AUX4_FUNCTION_CODE = 0x4000
 
 LIGHT_TIMER_BLOCK_REGISTER = 0x0470
 LIGHT_FUNCTION_REGISTER = 0x047B
+
+# Value written to LIGHT_FUNCTION_REGISTER on turn-on.
+_LIGHTING_FUNCTION_CODE = 2
+
+# Value written to EXEC_REGISTER to commit a pending relay/function write.
+_EXEC_COMMIT = 1
 
 # 32-bit RTC counter (low word here, high at +1).
 DEVICE_TIME_REGISTER = 0x0408  # MBF_PAR_TIME_LOW
@@ -226,6 +301,104 @@ TIMER_BLOCKS = {
     "relay_aux4b": 0x049D,
 }
 
+
+# ---------------------------------------------------------------------------
+# Internal layout mappings used by the client's high-level write methods.
+# Callers use the public enums (:class:`RelayKind`, :class:`SetpointKind`, ...)
+# and never see these raw addresses.
+# ---------------------------------------------------------------------------
+
+# Per-relay (function_register, timer_block_register, function_code) triple.
+# LIGHT uses the fixed lighting-function code; each AUX has a distinct code
+# that identifies that relay in MBF_RELAY_STATE.
+_RELAY_LAYOUT: Mapping[RelayKind, tuple[int, int, int]] = {
+    RelayKind.LIGHT: (
+        LIGHT_FUNCTION_REGISTER,
+        LIGHT_TIMER_BLOCK_REGISTER,
+        _LIGHTING_FUNCTION_CODE,
+    ),
+    RelayKind.AUX1: (
+        AUX1_FUNCTION_REGISTER,
+        AUX1_TIMER_BLOCK_REGISTER,
+        AUX1_FUNCTION_CODE,
+    ),
+    RelayKind.AUX2: (
+        AUX2_FUNCTION_REGISTER,
+        AUX2_TIMER_BLOCK_REGISTER,
+        AUX2_FUNCTION_CODE,
+    ),
+    RelayKind.AUX3: (
+        AUX3_FUNCTION_REGISTER,
+        AUX3_TIMER_BLOCK_REGISTER,
+        AUX3_FUNCTION_CODE,
+    ),
+    RelayKind.AUX4: (
+        AUX4_FUNCTION_REGISTER,
+        AUX4_TIMER_BLOCK_REGISTER,
+        AUX4_FUNCTION_CODE,
+    ),
+}
+
+# (timer_enable_key, runtime_state_key) mirrors the decoded output of
+# :meth:`NeoPoolModbusClient.async_read_all` (``relay_light_enable``,
+# ``relay_aux{n}_enable``, ``Pool Light``, ``AUX{n}``). The client returns
+# these keys in the optimistic-update dict so the caller can merge them into
+# its own state cache without knowing the decoding rules.
+_RELAY_STATE_KEYS: Mapping[RelayKind, tuple[str, str]] = {
+    RelayKind.LIGHT: ("relay_light_enable", "Pool Light"),
+    RelayKind.AUX1: ("relay_aux1_enable", "AUX1"),
+    RelayKind.AUX2: ("relay_aux2_enable", "AUX2"),
+    RelayKind.AUX3: ("relay_aux3_enable", "AUX3"),
+    RelayKind.AUX4: ("relay_aux4_enable", "AUX4"),
+}
+
+# (register, coordinator_data_key) for binary configuration flags.
+_BINARY_FLAG_LAYOUT: Mapping[BinaryConfigFlag, tuple[int, str]] = {
+    BinaryConfigFlag.CLIMA_ONOFF: (CLIMA_ONOFF_REGISTER, "MBF_PAR_CLIMA_ONOFF"),
+    BinaryConfigFlag.SMART_ANTI_FREEZE: (
+        SMART_ANTI_FREEZE_REGISTER,
+        "MBF_PAR_SMART_ANTI_FREEZE",
+    ),
+    BinaryConfigFlag.UV_MODE: (UV_MODE_REGISTER, "MBF_PAR_UV_MODE"),
+}
+
+# Bit inside HIDRO_COVER_ENABLE_REGISTER (0x042C) for each bitmask flag.
+_BITMASK_FLAG_LAYOUT: Mapping[BitmaskConfigFlag, int] = {
+    BitmaskConfigFlag.HIDRO_COVER_ENABLE: HIDRO_COVER_ENABLE_BIT,
+    BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN: HIDRO_TEMP_SHUTDOWN_BIT,
+}
+
+# (register, coordinator_data_key) for each setpoint.
+_SETPOINT_LAYOUT: Mapping[SetpointKind, tuple[int, str]] = {
+    SetpointKind.HEATING: (HEATING_SETPOINT_REGISTER, "MBF_PAR_HEATING_TEMP"),
+    SetpointKind.INTELLIGENT: (
+        INTELLIGENT_SETPOINT_REGISTER,
+        "MBF_PAR_INTELLIGENT_TEMP",
+    ),
+    SetpointKind.PH_MAX: (PH_MAX_SETPOINT_REGISTER, "MBF_PAR_PH1"),
+    SetpointKind.PH_MIN: (PH_MIN_SETPOINT_REGISTER, "MBF_PAR_PH2"),
+    SetpointKind.REDOX: (REDOX_SETPOINT_REGISTER, "MBF_PAR_RX1"),
+    SetpointKind.CHLORINE: (CHLORINE_SETPOINT_REGISTER, "MBF_PAR_CL1"),
+    SetpointKind.HIDRO: (HIDRO_SETPOINT_REGISTER, "MBF_PAR_HIDRO"),
+}
+
+# (register, mask, shift, coordinator_data_key) for values packed into a
+# shared register.
+_MASKED_FLAG_LAYOUT: Mapping[MaskedFlag, tuple[int, int, int, str]] = {
+    MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT: (
+        HIDRO_COVER_REGISTER,
+        HIDRO_COVER_REDUCTION_MASK,
+        HIDRO_COVER_REDUCTION_SHIFT,
+        "MBF_PAR_HIDRO_COVER_REDUCTION",
+    ),
+    MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE: (
+        HIDRO_COVER_REGISTER,
+        HIDRO_SHUTDOWN_TEMP_MASK,
+        HIDRO_SHUTDOWN_TEMP_SHIFT,
+        "MBF_PAR_HIDRO_COVER_REDUCTION",
+    ),
+}
+
 __all__ = [
     "AUX1_FUNCTION_CODE",
     "AUX1_FUNCTION_REGISTER",
@@ -239,6 +412,8 @@ __all__ = [
     "AUX4_FUNCTION_CODE",
     "AUX4_FUNCTION_REGISTER",
     "AUX4_TIMER_BLOCK_REGISTER",
+    "BinaryConfigFlag",
+    "BitmaskConfigFlag",
     "CELL_BOOST_REGISTER",
     "CHLORINE_SETPOINT_REGISTER",
     "CLEAR_EEPROM_REGISTER",
@@ -281,15 +456,19 @@ __all__ = [
     "MANUAL_FILTRATION_REGISTER",
     "MAX_REGISTERS_PER_READ",
     "MAX_RELAY_GPIO",
+    "MaskedFlag",
     "PH_MAX_SETPOINT_REGISTER",
     "PH_MIN_SETPOINT_REGISTER",
     "REDOX_SETPOINT_REGISTER",
     "RELAY_ACTIVATION_DELAY_REGISTER",
     "RESET_USER_COUNTERS_REGISTER",
+    "RelayKind",
+    "RelayMode",
     "SMART_ANTI_FREEZE_REGISTER",
     "SMART_TEMP_HIGH_REGISTER",
     "SMART_TEMP_LOW_REGISTER",
     "STOP_ALL_MODULES_REGISTER",
+    "SetpointKind",
     "TIMER_BLOCKS",
     "TimerRelayMode",
     "UV_MODE_REGISTER",
