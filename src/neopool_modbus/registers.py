@@ -94,6 +94,8 @@ class SetpointKind(IntEnum):
     REDOX = 4
     CHLORINE = 5
     HIDRO = 6
+    SMART_TEMP_HIGH = 7
+    SMART_TEMP_LOW = 8
 
 
 class MaskedFlag(IntEnum):
@@ -380,6 +382,8 @@ _SETPOINT_LAYOUT: Mapping[SetpointKind, tuple[int, str]] = {
     SetpointKind.REDOX: (REDOX_SETPOINT_REGISTER, "MBF_PAR_RX1"),
     SetpointKind.CHLORINE: (CHLORINE_SETPOINT_REGISTER, "MBF_PAR_CL1"),
     SetpointKind.HIDRO: (HIDRO_SETPOINT_REGISTER, "MBF_PAR_HIDRO"),
+    SetpointKind.SMART_TEMP_HIGH: (SMART_TEMP_HIGH_REGISTER, "MBF_PAR_SMART_TEMP_HIGH"),
+    SetpointKind.SMART_TEMP_LOW: (SMART_TEMP_LOW_REGISTER, "MBF_PAR_SMART_TEMP_LOW"),
 }
 
 # (register, mask, shift, coordinator_data_key) for values packed into a
