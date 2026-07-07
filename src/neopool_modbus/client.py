@@ -1279,7 +1279,7 @@ class NeoPoolModbusClient:
         )
 
     async def async_set_setpoint(
-        self, kind: SetpointKind, value: int, apply: bool = False
+        self, kind: SetpointKind, value: int, apply: bool = True
     ) -> dict[str, Any]:
         """Write *value* to the register that backs *kind*.
 
@@ -1290,10 +1290,10 @@ class NeoPoolModbusClient:
         25.0 °C, 750 for pH 7.50); the method performs no range
         validation.
 
-        ``apply`` defaults to False for a volatile write; pass True to
-        commit the change to EEPROM and restart the affected modules.
-        This is useful for batching several volatile writes and
-        committing them together with a final ``apply=True`` call.
+        ``apply`` defaults to True because setpoints are user-visible
+        configuration values that must persist across a device power
+        cycle; pass False to batch several volatile writes and commit
+        them together with a final ``apply=True`` call.
 
         Returns an optimistic-update dict of the coordinator-data key the
         caller can merge into its own cache without knowing the register
