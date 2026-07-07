@@ -41,10 +41,14 @@ from .decoders import (
 from .exceptions import (
     NeoPoolConnectionError,
     NeoPoolError,
+    NeoPoolInvalidStateError,
     NeoPoolModbusError,
     NeoPoolTimeoutError,
 )
 from .registers import (
+    _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
+    _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _RELAY_STATE_KEYS,  # pyright: ignore[reportPrivateUsage]
     CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
     COPY_TO_RTC_REGISTER,
@@ -59,9 +63,13 @@ from .registers import (
     FILTRATION_SPEED_SHIFT,
     HEATING_SETPOINT_REGISTER,
     INTELLIGENT_SETPOINT_REGISTER,
+    MANUAL_FILTRATION_REGISTER,
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
+    RelayKind,
+    RelayMode,
+    TimerRelayMode,
     is_input_register,
     is_valid_relay_gpio,
 )
@@ -1258,6 +1266,87 @@ class NeoPoolModbusClient:
         return await self.async_write_register(
             INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
         )
+
+    @staticmethod
+    def _relay_timer_name(relay: RelayKind) -> str:
+        """Return the timer-block name in :data:`TIMER_BLOCKS` for *relay*."""
+        if relay is RelayKind.LIGHT:
+            return "relay_light"
+        return f"relay_aux{relay.value}"
+
+    async def async_set_relay_state(self, relay: RelayKind, on: bool) -> dict[str, Any]:
+        """Turn a manual-mode relay on or off.
+
+        Writes the relay's function code + ``ALWAYS_ON`` when *on* is True,
+        or ``ALWAYS_OFF`` when *on* is False, then commits via EXEC. The
+        relay must currently be in a manual mode (``ALWAYS_ON`` /
+        ``ALWAYS_OFF``); calling this while the relay is in ``ENABLED``
+        (auto / timer-driven) mode raises :class:`NeoPoolInvalidStateError`
+        because the device would ignore the write.
+
+        Returns an optimistic-update dict of the two coordinator-data keys
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        function_register, timer_block_register, function_code = _RELAY_LAYOUT[relay]
+        timer_enable_key, runtime_state_key = _RELAY_STATE_KEYS[relay]
+
+        current_mode = self._cached_result.get(timer_enable_key)
+        if current_mode == TimerRelayMode.ENABLED:
+            raise NeoPoolInvalidStateError(
+                f"Relay {relay.name} is in AUTO mode; cannot control manually"
+            )
+
+        if on:
+            await self.async_write_register(function_register, function_code)
+            await self.async_write_register(
+                timer_block_register, TimerRelayMode.ALWAYS_ON
+            )
+            new_mode = TimerRelayMode.ALWAYS_ON
+        else:
+            await self.async_write_register(
+                timer_block_register, TimerRelayMode.ALWAYS_OFF
+            )
+            new_mode = TimerRelayMode.ALWAYS_OFF
+        await self.async_write_register(EXEC_REGISTER, _EXEC_COMMIT)
+
+        _LOGGER.debug("Relay %s set to %s", relay.name, "ON" if on else "OFF")
+        return {timer_enable_key: new_mode, runtime_state_key: on}
+
+    async def async_set_relay_mode(
+        self, relay: RelayKind, mode: RelayMode
+    ) -> dict[str, Any]:
+        """Switch a relay between AUTO / ALWAYS_ON / ALWAYS_OFF.
+
+        Delegates to :meth:`write_timer`, which preserves the surrounding
+        timer-block fields. Returns an optimistic-update dict with the
+        relay's timer-enable coordinator-data key so the caller can merge
+        it into its own cache.
+        """
+        timer_enable_key, _ = _RELAY_STATE_KEYS[relay]
+        timer_name = self._relay_timer_name(relay)
+        await self.write_timer(timer_name, {"enable": mode.value})
+        _LOGGER.debug("Relay %s mode set to %s", relay.name, mode.name)
+        return {timer_enable_key: mode.value}
+
+    async def async_set_manual_filtration(self, on: bool) -> dict[str, Any]:
+        """Toggle the manual filtration pump.
+
+        Requires the device to be in manual filtration mode
+        (``MBF_PAR_FILT_MODE == 0``); otherwise raises
+        :class:`NeoPoolInvalidStateError` because the pump register is only
+        honoured while manual mode is selected.
+
+        Returns an optimistic-update dict with the ``"Filtration Pump"``
+        coordinator-data key.
+        """
+        if self._cached_result.get("MBF_PAR_FILT_MODE") != 0:
+            raise NeoPoolInvalidStateError(
+                "Device is not in manual filtration mode; set MBF_PAR_FILT_MODE=0 first"
+            )
+        await self.async_write_register(MANUAL_FILTRATION_REGISTER, 1 if on else 0)
+        _LOGGER.debug("Manual filtration set to %s", "ON" if on else "OFF")
+        return {"Filtration Pump": on}
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:

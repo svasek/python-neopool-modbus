@@ -23,6 +23,7 @@ from pymodbus.framer import FramerType
 import neopool_modbus.client as neopool_modbus
 from neopool_modbus.exceptions import (
     NeoPoolConnectionError,
+    NeoPoolInvalidStateError,
     NeoPoolModbusError,
     NeoPoolTimeoutError,
 )
@@ -3001,3 +3002,196 @@ async def test_async_set_temp_setpoint_apply_override(config):
         call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
         call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=False),
     ]
+
+
+# ---------------------------------------------------------------------------
+# High-level relay + manual-filtration write methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "relay",
+    [
+        neopool_modbus.RelayKind.LIGHT,
+        neopool_modbus.RelayKind.AUX1,
+        neopool_modbus.RelayKind.AUX2,
+        neopool_modbus.RelayKind.AUX3,
+        neopool_modbus.RelayKind.AUX4,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_state_on_writes_function_and_always_on(config, relay):
+    """Turning a relay on writes function code + ALWAYS_ON, then commits via EXEC."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    # Cache is empty by default (relay not in AUTO); guard passes.
+    function_register, timer_block_register, function_code = (
+        neopool_modbus._RELAY_LAYOUT[relay]
+    )
+    timer_enable_key, runtime_state_key = neopool_modbus._RELAY_STATE_KEYS[relay]
+
+    result = await client.async_set_relay_state(relay, True)
+
+    assert result == {
+        timer_enable_key: neopool_modbus.TimerRelayMode.ALWAYS_ON,
+        runtime_state_key: True,
+    }
+    assert client.async_write_register.await_args_list == [
+        call(function_register, function_code),
+        call(timer_block_register, neopool_modbus.TimerRelayMode.ALWAYS_ON),
+        call(neopool_modbus.EXEC_REGISTER, neopool_modbus._EXEC_COMMIT),
+    ]
+
+
+@pytest.mark.parametrize(
+    "relay",
+    [
+        neopool_modbus.RelayKind.LIGHT,
+        neopool_modbus.RelayKind.AUX1,
+        neopool_modbus.RelayKind.AUX2,
+        neopool_modbus.RelayKind.AUX3,
+        neopool_modbus.RelayKind.AUX4,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_state_off_writes_always_off_only(config, relay):
+    """Turning a relay off writes ALWAYS_OFF (no function code), then EXEC."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    _, timer_block_register, _ = neopool_modbus._RELAY_LAYOUT[relay]
+    timer_enable_key, runtime_state_key = neopool_modbus._RELAY_STATE_KEYS[relay]
+
+    result = await client.async_set_relay_state(relay, False)
+
+    assert result == {
+        timer_enable_key: neopool_modbus.TimerRelayMode.ALWAYS_OFF,
+        runtime_state_key: False,
+    }
+    assert client.async_write_register.await_args_list == [
+        call(timer_block_register, neopool_modbus.TimerRelayMode.ALWAYS_OFF),
+        call(neopool_modbus.EXEC_REGISTER, neopool_modbus._EXEC_COMMIT),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_state_rejects_auto_mode(config):
+    """A relay currently in ENABLED (auto) mode cannot be driven manually."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    timer_enable_key, _ = neopool_modbus._RELAY_STATE_KEYS[
+        neopool_modbus.RelayKind.AUX1
+    ]
+    client._cached_result[timer_enable_key] = neopool_modbus.TimerRelayMode.ENABLED
+
+    with pytest.raises(NeoPoolInvalidStateError, match="AUX1 is in AUTO mode"):
+        await client.async_set_relay_state(neopool_modbus.RelayKind.AUX1, True)
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_state_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
+    with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_relay_state(neopool_modbus.RelayKind.LIGHT, True)
+
+
+@pytest.mark.parametrize(
+    "relay",
+    [
+        neopool_modbus.RelayKind.LIGHT,
+        neopool_modbus.RelayKind.AUX1,
+        neopool_modbus.RelayKind.AUX2,
+        neopool_modbus.RelayKind.AUX3,
+        neopool_modbus.RelayKind.AUX4,
+    ],
+)
+@pytest.mark.parametrize(
+    "mode",
+    [
+        neopool_modbus.RelayMode.AUTO,
+        neopool_modbus.RelayMode.ALWAYS_ON,
+        neopool_modbus.RelayMode.ALWAYS_OFF,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_mode_writes_enable_via_write_timer(config, relay, mode):
+    """Each (RelayKind, RelayMode) pair maps to a write_timer call with the enum's wire value."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.write_timer = AsyncMock(return_value=True)
+    timer_enable_key, _ = neopool_modbus._RELAY_STATE_KEYS[relay]
+    expected_name = (
+        "relay_light"
+        if relay is neopool_modbus.RelayKind.LIGHT
+        else f"relay_aux{relay.value}"
+    )
+
+    result = await client.async_set_relay_mode(relay, mode)
+
+    assert result == {timer_enable_key: mode.value}
+    client.write_timer.assert_awaited_once_with(expected_name, {"enable": mode.value})
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_mode_propagates_connection_error(config):
+    """write_timer failures propagate through async_set_relay_mode."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.write_timer = AsyncMock(side_effect=NeoPoolConnectionError("no route"))
+    with pytest.raises(NeoPoolConnectionError, match="no route"):
+        await client.async_set_relay_mode(
+            neopool_modbus.RelayKind.AUX2, neopool_modbus.RelayMode.AUTO
+        )
+
+
+@pytest.mark.parametrize("on", [True, False])
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_writes_bit(config, on):
+    """Writes 1 when *on* is True, 0 when False; returns the optimistic dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_FILT_MODE"] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_manual_filtration(on)
+
+    assert result == {"Filtration Pump": on}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.MANUAL_FILTRATION_REGISTER, 1 if on else 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_rejects_non_manual_mode(config):
+    """Refuses the write when MBF_PAR_FILT_MODE is not 0 (manual)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    client._cached_result["MBF_PAR_FILT_MODE"] = 1  # auto
+
+    with pytest.raises(NeoPoolInvalidStateError, match="not in manual filtration"):
+        await client.async_set_manual_filtration(True)
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_rejects_when_mode_unknown(config):
+    """An unread MBF_PAR_FILT_MODE (missing from cache) is treated as non-manual."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+
+    with pytest.raises(NeoPoolInvalidStateError):
+        await client.async_set_manual_filtration(False)
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_FILT_MODE"] = 0
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
+    with pytest.raises(NeoPoolConnectionError, match="nope"):
+        await client.async_set_manual_filtration(True)
