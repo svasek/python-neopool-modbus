@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0](https://github.com/svasek/python-neopool-modbus/compare/v3.6.0...v4.0.0) (2026-07-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* 💥 rename HIDRO/ION Low Flow status keys to Low + add Redox Low ([#40](https://github.com/svasek/python-neopool-modbus/issues/40))
+* 💥 add high-level relay / setpoint / flag API ([#39](https://github.com/svasek/python-neopool-modbus/issues/39))
+
+### ✨ Features
+
+* 💥 add high-level relay / setpoint / flag API ([#39](https://github.com/svasek/python-neopool-modbus/issues/39)) ([30a5a8e](https://github.com/svasek/python-neopool-modbus/commit/30a5a8e3cb6356ada4e77cb47796069d51e5a899))
+* 💥 rename HIDRO/ION Low Flow status keys to Low + add Redox Low ([#40](https://github.com/svasek/python-neopool-modbus/issues/40)) ([61f9747](https://github.com/svasek/python-neopool-modbus/commit/61f974764609b4c0979b5d7e67375edb2293ba70)), closes [#33](https://github.com/svasek/python-neopool-modbus/issues/33)
+
 ## [3.6.0](https://github.com/svasek/python-neopool-modbus/compare/v3.5.0...v3.6.0) (2026-07-02)
 
 
