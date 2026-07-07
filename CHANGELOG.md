@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0](https://github.com/svasek/python-neopool-modbus/compare/v4.0.0...v4.1.0) (2026-07-07)
+
+
+### ✨ Features
+
+* **client:** ✨ add ConfigKind + async_set_config_option for discrete config slots ([#44](https://github.com/svasek/python-neopool-modbus/issues/44)) ([08d5a1e](https://github.com/svasek/python-neopool-modbus/commit/08d5a1e8d01c64ffe5c35d4779589670474b32d5))
+* **client:** ✨ extend async_set_setpoint with SMART_TEMP kinds and apply kwarg ([#42](https://github.com/svasek/python-neopool-modbus/issues/42)) ([8fda90c](https://github.com/svasek/python-neopool-modbus/commit/8fda90cd10bc5eaba8db8741b5bf0bddfd24c921))
+
 ## [4.0.0](https://github.com/svasek/python-neopool-modbus/compare/v3.6.0...v4.0.0) (2026-07-07)
 
 
