@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0](https://github.com/svasek/python-neopool-modbus/compare/v4.1.0...v4.2.0) (2026-07-07)
+
+
+### ✨ Features
+
+* **exceptions:** ✨ add reason discriminator to NeoPoolInvalidStateError ([#47](https://github.com/svasek/python-neopool-modbus/issues/47)) ([91c09f6](https://github.com/svasek/python-neopool-modbus/commit/91c09f69c49f314ab116b5084c11ad27c9b821bd))
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🩹 default apply=True on async_set_setpoint ([#45](https://github.com/svasek/python-neopool-modbus/issues/45)) ([eb8f536](https://github.com/svasek/python-neopool-modbus/commit/eb8f536b4455557ca97e01b57014065cc78b089c))
+
 ## [4.1.0](https://github.com/svasek/python-neopool-modbus/compare/v4.0.0...v4.1.0) (2026-07-07)
 
 
