@@ -3327,3 +3327,169 @@ async def test_async_set_masked_register_propagates_connection_error(config):
         await client.async_set_masked_register(
             neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT, 10
         )
+
+
+# ---------------------------------------------------------------------------
+# High-level binary + bitmask config-flag write methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        neopool_modbus.BinaryConfigFlag.CLIMA_ONOFF,
+        neopool_modbus.BinaryConfigFlag.SMART_ANTI_FREEZE,
+        neopool_modbus.BinaryConfigFlag.UV_MODE,
+    ],
+)
+@pytest.mark.parametrize("on", [True, False])
+@pytest.mark.asyncio
+async def test_async_set_binary_flag_writes_expected_register(config, flag, on):
+    """Each BinaryConfigFlag writes 1/0 to its register and returns the data-key dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._BINARY_FLAG_LAYOUT[flag]
+    expected = 1 if on else 0
+
+    result = await client.async_set_binary_flag(flag, on)
+
+    assert result == {data_key: expected}
+    client.async_write_register.assert_awaited_once_with(register, expected)
+
+
+@pytest.mark.asyncio
+async def test_async_set_binary_flag_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
+    with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_binary_flag(
+            neopool_modbus.BinaryConfigFlag.UV_MODE, True
+        )
+
+
+@pytest.mark.parametrize(
+    ("flag", "current", "on", "expected"),
+    [
+        # HIDRO_COVER_ENABLE (bit 0): set from a cleared register.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE,
+            0,
+            True,
+            0x0001,
+        ),
+        # HIDRO_COVER_ENABLE: clear from a fully-set register, keep bit 1.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE,
+            0x0003,
+            False,
+            0x0002,
+        ),
+        # HIDRO_TEMP_SHUTDOWN (bit 1): set while keeping bit 0.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN,
+            0x0001,
+            True,
+            0x0003,
+        ),
+        # HIDRO_TEMP_SHUTDOWN: clear from a fully-set register, keep bit 0.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN,
+            0x0003,
+            False,
+            0x0001,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_preserves_other_bits(
+    config, flag, current, on, expected
+):
+    """RMW flips the target bit while keeping every other bit intact."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = current
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_bitmask_flag(flag, on)
+
+    assert result == {"MBF_PAR_HIDRO_COVER_ENABLE": expected}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, expected, apply=True
+    )
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE,
+        neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_idempotent_when_bit_already_matches(config, flag):
+    """Turning a bit ON while it is already set (or OFF while cleared) still writes."""
+    bit = neopool_modbus._BITMASK_FLAG_LAYOUT[flag]
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = bit
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    # bit is set; turning it ON again keeps the value.
+    result_on = await client.async_set_bitmask_flag(flag, True)
+    assert result_on == {"MBF_PAR_HIDRO_COVER_ENABLE": bit}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, bit, apply=True
+    )
+
+    # Clear the cache and try the OFF-when-already-clear path.
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result_off = await client.async_set_bitmask_flag(flag, False)
+    assert result_off == {"MBF_PAR_HIDRO_COVER_ENABLE": 0}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, 0, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_treats_missing_cache_as_zero(config):
+    """A missing MBF_PAR_HIDRO_COVER_ENABLE cache entry is treated as 0."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result.pop("MBF_PAR_HIDRO_COVER_ENABLE", None)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    flag = neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN
+    bit = neopool_modbus._BITMASK_FLAG_LAYOUT[flag]
+
+    result = await client.async_set_bitmask_flag(flag, True)
+
+    assert result == {"MBF_PAR_HIDRO_COVER_ENABLE": bit}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, bit, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_treats_none_cache_as_zero(config):
+    """A cached ``None`` value is coerced to 0 for the RMW."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = None
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    flag = neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE
+    bit = neopool_modbus._BITMASK_FLAG_LAYOUT[flag]
+
+    result = await client.async_set_bitmask_flag(flag, True)
+
+    assert result == {"MBF_PAR_HIDRO_COVER_ENABLE": bit}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, bit, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
+    with pytest.raises(NeoPoolConnectionError, match="nope"):
+        await client.async_set_bitmask_flag(
+            neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE, True
+        )

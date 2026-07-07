@@ -46,6 +46,8 @@ from .exceptions import (
     NeoPoolTimeoutError,
 )
 from .registers import (
+    _BINARY_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _BITMASK_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
     _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
@@ -64,11 +66,14 @@ from .registers import (
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
     HEATING_SETPOINT_REGISTER,
+    HIDRO_COVER_ENABLE_REGISTER,
     INTELLIGENT_SETPOINT_REGISTER,
     MANUAL_FILTRATION_REGISTER,
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
+    BinaryConfigFlag,
+    BitmaskConfigFlag,
     MaskedFlag,
     RelayKind,
     RelayMode,
@@ -1393,6 +1398,52 @@ class NeoPoolModbusClient:
         await self.async_write_register(MANUAL_FILTRATION_REGISTER, 1 if on else 0)
         _LOGGER.debug("Manual filtration set to %s", "ON" if on else "OFF")
         return {"Filtration Pump": on}
+
+    async def async_set_binary_flag(
+        self, flag: BinaryConfigFlag, on: bool
+    ) -> dict[str, Any]:
+        """Turn a binary configuration flag on or off.
+
+        Covers flags backed by a dedicated on/off register
+        (``CLIMA_ONOFF``, ``SMART_ANTI_FREEZE``, ``UV_MODE``) so callers
+        do not need to import the individual register addresses. Writes
+        ``1`` when *on* is True, ``0`` when False.
+
+        Returns an optimistic-update dict of the coordinator-data key
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        register, data_key = _BINARY_FLAG_LAYOUT[flag]
+        value = 1 if on else 0
+        await self.async_write_register(register, value)
+        _LOGGER.debug("Binary flag %s set to %s", flag.name, value)
+        return {data_key: value}
+
+    async def async_set_bitmask_flag(
+        self, flag: BitmaskConfigFlag, on: bool
+    ) -> dict[str, Any]:
+        """Set or clear a bit inside :data:`HIDRO_COVER_ENABLE_REGISTER`.
+
+        Covers flags packed as bits in a shared register
+        (``HIDRO_COVER_ENABLE``, ``HIDRO_TEMP_SHUTDOWN``). Performs a
+        read-modify-write against the last-read cache
+        (:attr:`_cached_result`) so the surrounding bits are preserved;
+        a missing cache entry is treated as ``0``. The write is applied
+        with ``apply=True`` to persist the change to EEPROM and restart
+        the affected modules.
+
+        Returns an optimistic-update dict of the
+        ``MBF_PAR_HIDRO_COVER_ENABLE`` coordinator-data key with the new
+        register value so the caller can merge it into its own cache.
+        """
+        bit = _BITMASK_FLAG_LAYOUT[flag]
+        current = int(self._cached_result.get("MBF_PAR_HIDRO_COVER_ENABLE", 0) or 0)
+        new_value = current | bit if on else current & ~bit
+        await self.async_write_register(
+            HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
+        )
+        _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
+        return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
 
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:
