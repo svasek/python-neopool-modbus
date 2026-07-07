@@ -39,6 +39,7 @@ from .decoders import (
     parse_timer_block,
 )
 from .exceptions import (
+    InvalidStateReason,
     NeoPoolConnectionError,
     NeoPoolError,
     NeoPoolInvalidStateError,
@@ -1384,7 +1385,8 @@ class NeoPoolModbusClient:
         current_mode = self._cached_result.get(timer_enable_key)
         if current_mode == TimerRelayMode.ENABLED:
             raise NeoPoolInvalidStateError(
-                f"Relay {relay.name} is in AUTO mode; cannot control manually"
+                f"Relay {relay.name} is in AUTO mode; cannot control manually",
+                reason=InvalidStateReason.RELAY_IN_AUTO_MODE,
             )
 
         if on:
@@ -1432,7 +1434,8 @@ class NeoPoolModbusClient:
         """
         if self._cached_result.get("MBF_PAR_FILT_MODE") != 0:
             raise NeoPoolInvalidStateError(
-                "Device is not in manual filtration mode; set MBF_PAR_FILT_MODE=0 first"
+                "Device is not in manual filtration mode; set MBF_PAR_FILT_MODE=0 first",
+                reason=InvalidStateReason.FILTRATION_NOT_IN_MANUAL_MODE,
             )
         await self.async_write_register(MANUAL_FILTRATION_REGISTER, 1 if on else 0)
         _LOGGER.debug("Manual filtration set to %s", "ON" if on else "OFF")
