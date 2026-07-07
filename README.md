@@ -16,7 +16,7 @@
 [![Sponsor me](https://img.shields.io/badge/sponsor-❤-brightgreen?style=flat)](https://github.com/sponsors/svasek)
 [![Ko-fi](https://img.shields.io/badge/ko--fi-support-29abe0?style=flat&logo=ko-fi)](https://ko-fi.com/svasek)
 
-Async Python client for **NeoPool**-based pool controllers connected via **Modbus TCP**. 
+Async Python client for **NeoPool**-based pool controllers connected via **Modbus TCP**.
 
 > [!NOTE]
 > NeoPool is a control system originally developed by the
@@ -113,6 +113,7 @@ from neopool_modbus import (
     NeoPoolModbusClient,
     NeoPoolError,
     NeoPoolConnectionError,
+    NeoPoolInvalidStateError,
     NeoPoolModbusError,
     NeoPoolTimeoutError,
     async_probe_serial,
@@ -319,16 +320,23 @@ The client exposes named operations for the writes integrations
 typically need, so callers do not have to reach for raw register
 addresses:
 
-| Method                                          | Effect                                                                                    |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                  |
-| `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                          |
-| `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path) |
-| `async_set_temp_setpoint(raw, apply=True)`      | writes the same scaled value to heating + intelligent registers in sync                   |
-| `async_clear_errors()`                          | one-shot to `MBF_ESCAPE`                                                                  |
-| `async_save_to_eeprom()`                        | one-shot to `MBF_SAVE_TO_EEPROM`                                                          |
-| `async_reset_user_counters()`                   | resets user counters and chains the EEPROM save (the reset is volatile)                   |
-| `async_sync_device_time(timestamp)`             | writes the 32-bit `timestamp` to `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`     |
+| Method                                          | Effect                                                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `async_set_relay_state(relay, on)`              | drives the light or an AUX relay (`RelayKind.LIGHT`, `AUX1..4`) via its function + timer-block registers            |
+| `async_set_relay_mode(relay, mode)`             | switches a relay between `RelayMode.AUTO` / `ALWAYS_ON` / `ALWAYS_OFF` via `write_timer`                            |
+| `async_set_manual_filtration(on)`               | toggles the filtration pump, gated on `MBF_PAR_FILT_MODE == 0` (manual mode)                                        |
+| `async_set_binary_flag(flag, on)`               | on/off configuration flags (`CLIMA_ONOFF`, `SMART_ANTI_FREEZE`, `UV_MODE`)                                          |
+| `async_set_bitmask_flag(flag, on)`              | packed-bit flags (`HIDRO_COVER_ENABLE`, `HIDRO_TEMP_SHUTDOWN`) with read-modify-write                               |
+| `async_set_setpoint(kind, value)`               | pH / ORP / chlorine / heating / intelligent / hydrolysis setpoints via `SetpointKind`                               |
+| `async_set_masked_register(flag, value)`        | values packed into a shared register with a bitmask (`HIDRO_COVER_REDUCTION_PERCENT`, `HIDRO_SHUTDOWN_TEMPERATURE`) |
+| `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                                            |
+| `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                                                    |
+| `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)                           |
+| `async_set_temp_setpoint(raw, apply=True)`      | writes the same scaled value to heating + intelligent registers in sync                                             |
+| `async_clear_errors()`                          | one-shot to `MBF_ESCAPE`                                                                                            |
+| `async_save_to_eeprom()`                        | one-shot to `MBF_SAVE_TO_EEPROM`                                                                                    |
+| `async_reset_user_counters()`                   | resets user counters and chains the EEPROM save (the reset is volatile)                                             |
+| `async_sync_device_time(timestamp)`             | writes the 32-bit `timestamp` to `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`                               |
 
 Unknown mode/speed names raise `ValueError` before any I/O happens.
 
@@ -338,16 +346,60 @@ filtration mode, cell boost and temperature setpoint persist by
 default; the filtration speed select stays volatile so frequent UI
 adjustments do not wear the controller's EEPROM.
 
+#### Enum-driven writes and optimistic updates
+
+The first seven methods in the table above take a typed enum instead of
+a raw register address, and they return a `dict[str, Any]` of the
+values that will appear in the next `async_read_all()`. Callers can
+merge that dict into their own state cache to keep UI in sync without
+waiting for the next poll:
+
+```python
+from neopool_modbus import NeoPoolModbusClient
+from neopool_modbus.registers import RelayKind, RelayMode, SetpointKind
+
+client = NeoPoolModbusClient({"host": "192.168.1.42"})
+
+# Turn the pool light on. The read cache tells the client whether the
+# relay is in AUTO mode (in which case NeoPoolInvalidStateError is
+# raised); otherwise it writes the function code + timer block + EXEC.
+optimistic = await client.async_set_relay_state(RelayKind.LIGHT, True)
+# optimistic == {"relay_light_enable": 3, "Pool Light": True}
+
+# Switch AUX1 back to timer-driven mode.
+await client.async_set_relay_mode(RelayKind.AUX1, RelayMode.AUTO)
+
+# Set the pH low setpoint to 7.2 (raw units per the device manual).
+await client.async_set_setpoint(SetpointKind.PH_MIN, 720)
+```
+
+Guards live inside the library. `async_set_relay_state` refuses to
+control a relay whose timer is in `AUTO` mode; `async_set_manual_filtration`
+refuses when `MBF_PAR_FILT_MODE` is not zero. Both raise
+`NeoPoolInvalidStateError`, which callers catch and translate into
+user-facing messages:
+
+```python
+from neopool_modbus import NeoPoolInvalidStateError, NeoPoolModbusClient
+from neopool_modbus.registers import RelayKind
+
+try:
+    await client.async_set_relay_state(RelayKind.LIGHT, True)
+except NeoPoolInvalidStateError as exc:
+    print(f"Cannot turn the light on: {exc}")
+```
+
 All client methods translate underlying pymodbus exceptions into the
 `NeoPoolError` hierarchy at the library boundary, so callers never need
 to import `pymodbus` to catch errors:
 
-| Class                    | Raised when                                                                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NeoPoolConnectionError` | TCP connect fails, returned `False`, or the client is in its post-failure backoff                                                                 |
-| `NeoPoolTimeoutError`    | Connect, read, or write times out (`asyncio.TimeoutError`)                                                                                        |
-| `NeoPoolModbusError`     | A read returns a Modbus exception response (`isError()` true), or `async_write_aux_relay` / one of the timer write follow-ups returns `isError()` |
-| `NeoPoolError`           | Common base; catch this to handle any of the above                                                                                                |
+| Class                      | Raised when                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `NeoPoolConnectionError`   | TCP connect fails, returned `False`, or the client is in its post-failure backoff                                                   |
+| `NeoPoolTimeoutError`      | Connect, read, or write times out (`asyncio.TimeoutError`)                                                                          |
+| `NeoPoolModbusError`       | A read returns a Modbus exception response (`isError()` true), or one of the timer write follow-ups returns `isError()`             |
+| `NeoPoolInvalidStateError` | The device is in a state that rejects the requested operation (e.g. a relay is in AUTO mode when `async_set_relay_state` is called) |
+| `NeoPoolError`             | Common base; catch this to handle any of the above                                                                                  |
 
 > [!WARNING]
 > `NeoPoolModbusClient.async_write_register()` is the exception to the
@@ -368,7 +420,7 @@ except NeoPoolError as exc:
 ```
 
 `ValueError` is still raised directly for programmer errors such as an
-out-of-range AUX relay index — those are not transport failures.
+unknown filtration mode name; those are not transport failures.
 
 ## Features
 
