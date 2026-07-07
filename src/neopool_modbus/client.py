@@ -76,13 +76,6 @@ from .status_mask import (
 
 _LOGGER = logging.getLogger("neopool_modbus")
 
-AUX_BITMASKS = {
-    1: 0x0008,  # AUX1
-    2: 0x0010,  # AUX2
-    3: 0x0020,  # AUX3
-    4: 0x0040,  # AUX4
-}
-
 # MBF_NOTIFICATION (0x0110) page-change bitmask constants
 _NOTIF_MODBUS = 0x0001  # MBMSK_NOTIF_MODBUS_CHANGED
 _NOTIF_GLOBAL = 0x0002  # MBMSK_NOTIF_GLOBAL_CHANGED
@@ -1387,97 +1380,6 @@ class NeoPoolModbusClient:
             )
             raise NeoPoolModbusError(
                 f"Modbus TCP write exception at 0x{address:04X}: {e}"
-            ) from e
-        finally:
-            end = time.monotonic()
-            self._write_response_times.append(end - start)
-
-    """ Manual controller for AUX relays (1-4) """
-
-    async def async_write_aux_relay(self, relay_index: int, on: bool) -> None:
-        """Write state of an AUX relay (1-4) using function 0x10 (Write Multiple Registers).
-
-        Returns ``None`` on success. Raises :exc:`ValueError` if *relay_index*
-        is outside the supported range (1-4). Raises :exc:`NeoPoolError`
-        (specifically :exc:`NeoPoolConnectionError`, :exc:`NeoPoolTimeoutError`,
-        or :exc:`NeoPoolModbusError`) on any connection, read, or write error;
-        the four follow-up writes (relay enable, relay value, 0x0289 commit
-        trigger, EXEC_REGISTER) each validate ``isError()`` so a silent
-        device-side rejection cannot be reported as success.
-        """
-        if relay_index not in AUX_BITMASKS:
-            raise ValueError(f"Invalid AUX relay index: {relay_index} (expected 1-4)")
-        aux_bit = AUX_BITMASKS[relay_index]
-        addr = 0x010E
-        start = time.monotonic()
-        self._total_writes += 1
-
-        def _check(result: Any, message: str) -> None:
-            """Raise NeoPoolModbusError if a Modbus result indicates an error."""
-            if result.isError():
-                raise NeoPoolModbusError(message)
-
-        try:
-            client = await self.get_client()
-            if client is None or not client.connected:
-                raise NeoPoolConnectionError(  # noqa: TRY301  # raise inside try so the surrounding handler bumps diagnostics uniformly
-                    f"Modbus client connection failed to {self._host}:{self._port}"
-                )
-            # Read current relay state
-            current_result = await client.read_input_registers(
-                address=addr, count=1, device_id=self._unit
-            )
-            _check(
-                current_result, f"Modbus read error from 0x{addr:04X}: {current_result}"
-            )
-            current = current_result.registers[0]
-            # Set or clear the aux bit
-            value = current | aux_bit if on else current & ~aux_bit
-            result = await client.write_registers(
-                address=addr, values=[1], device_id=self._unit
-            )
-            _check(
-                result, f"Modbus write error at 0x{addr:04X} (relay enable): {result}"
-            )
-            result = await client.write_registers(
-                address=addr, values=[value], device_id=self._unit
-            )
-            _check(
-                result, f"Modbus write error at 0x{addr:04X} (relay value): {result}"
-            )
-            _LOGGER.debug("Wrote relay state at 0x%04X: 0x%04X", addr, value)
-            result = await client.write_registers(
-                address=0x0289, values=[0], device_id=self._unit
-            )
-            _check(result, f"Modbus write error at 0x0289 (commit trigger): {result}")
-            result = await client.write_registers(
-                address=EXEC_REGISTER, values=[1], device_id=self._unit
-            )
-            _check(
-                result,
-                f"Modbus write error at 0x{EXEC_REGISTER:04X} (EXEC): {result}",
-            )
-            self._successful_write_ops += 1
-            self._successful_writes.append((f"0x{addr:04X}", time.time()))
-
-        except NeoPoolError:
-            self._failed_writes[f"0x{addr:04X}"] = (
-                self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-            )
-            raise
-        except TimeoutError as e:
-            self._failed_writes[f"0x{addr:04X}"] = (
-                self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-            )
-            raise NeoPoolTimeoutError(
-                f"Modbus TCP AUX relay write timed out at 0x{addr:04X}: {e}"
-            ) from e
-        except Exception as e:
-            self._failed_writes[f"0x{addr:04X}"] = (
-                self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-            )
-            raise NeoPoolModbusError(
-                f"Modbus TCP AUX relay write failed at 0x{addr:04X}: {e}"
             ) from e
         finally:
             end = time.monotonic()
