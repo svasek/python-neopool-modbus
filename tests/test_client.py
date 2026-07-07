@@ -3226,7 +3226,7 @@ async def test_async_set_setpoint_writes_expected_register(config, kind):
     result = await client.async_set_setpoint(kind, 250)
 
     assert result == {data_key: 250}
-    client.async_write_register.assert_awaited_once_with(register, 250, apply=False)
+    client.async_write_register.assert_awaited_once_with(register, 250, apply=True)
 
 
 @pytest.mark.parametrize("apply", [False, True])
