@@ -3087,8 +3087,9 @@ async def test_async_set_relay_state_rejects_auto_mode(config):
     ]
     client._cached_result[timer_enable_key] = neopool_modbus.TimerRelayMode.ENABLED
 
-    with pytest.raises(NeoPoolInvalidStateError, match="AUX1 is in AUTO mode"):
+    with pytest.raises(NeoPoolInvalidStateError, match="AUX1 is in AUTO mode") as exc:
         await client.async_set_relay_state(neopool_modbus.RelayKind.AUX1, True)
+    assert exc.value.reason == neopool_modbus.InvalidStateReason.RELAY_IN_AUTO_MODE
     client.async_write_register.assert_not_awaited()
 
 
@@ -3171,8 +3172,14 @@ async def test_async_set_manual_filtration_rejects_non_manual_mode(config):
     client.async_write_register = AsyncMock()
     client._cached_result["MBF_PAR_FILT_MODE"] = 1  # auto
 
-    with pytest.raises(NeoPoolInvalidStateError, match="not in manual filtration"):
+    with pytest.raises(
+        NeoPoolInvalidStateError, match="not in manual filtration"
+    ) as exc:
         await client.async_set_manual_filtration(True)
+    assert (
+        exc.value.reason
+        == neopool_modbus.InvalidStateReason.FILTRATION_NOT_IN_MANUAL_MODE
+    )
     client.async_write_register.assert_not_awaited()
 
 
@@ -3182,8 +3189,12 @@ async def test_async_set_manual_filtration_rejects_when_mode_unknown(config):
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock()
 
-    with pytest.raises(NeoPoolInvalidStateError):
+    with pytest.raises(NeoPoolInvalidStateError) as exc:
         await client.async_set_manual_filtration(False)
+    assert (
+        exc.value.reason
+        == neopool_modbus.InvalidStateReason.FILTRATION_NOT_IN_MANUAL_MODE
+    )
     client.async_write_register.assert_not_awaited()
 
 

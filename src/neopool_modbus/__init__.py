@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from .client import NeoPoolModbusClient
 from .exceptions import (
+    InvalidStateReason,
     NeoPoolConnectionError,
     NeoPoolError,
     NeoPoolInvalidStateError,
@@ -42,6 +43,7 @@ from .probe import async_probe_serial
 __version__ = "4.1.0"
 
 __all__ = [
+    "InvalidStateReason",
     "NeoPoolConnectionError",
     "NeoPoolError",
     "NeoPoolInvalidStateError",

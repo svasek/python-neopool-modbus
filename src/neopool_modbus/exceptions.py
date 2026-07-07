@@ -22,6 +22,20 @@ never need to catch :mod:`pymodbus`-specific types.
 
 from __future__ import annotations
 
+from enum import Enum
+
+
+class InvalidStateReason(Enum):
+    """Discriminator for :class:`NeoPoolInvalidStateError` sub-cases.
+
+    Callers can dispatch on this to render distinct user-facing messages
+    (e.g. "relay in AUTO mode" vs "filtration not in manual mode")
+    without parsing exception message strings.
+    """
+
+    RELAY_IN_AUTO_MODE = "relay_in_auto_mode"
+    FILTRATION_NOT_IN_MANUAL_MODE = "filtration_not_in_manual_mode"
+
 
 class NeoPoolError(Exception):
     """Base class for all ``neopool_modbus`` errors."""
@@ -53,10 +67,22 @@ class NeoPoolInvalidStateError(NeoPoolError):
     issue). Callers can catch this to translate into user-facing messages
     ("device is in auto mode, cannot control manually") without conflating
     a legitimate state with a hardware fault.
+
+    The optional :attr:`reason` attribute discriminates between distinct
+    sub-cases (e.g. relay in AUTO vs filtration not in manual mode) so
+    callers can dispatch without parsing the exception message.
     """
+
+    def __init__(
+        self, message: str, *, reason: InvalidStateReason | None = None
+    ) -> None:
+        """Store the human-readable *message* and the optional *reason* enum."""
+        super().__init__(message)
+        self.reason = reason
 
 
 __all__ = [
+    "InvalidStateReason",
     "NeoPoolConnectionError",
     "NeoPoolError",
     "NeoPoolInvalidStateError",
