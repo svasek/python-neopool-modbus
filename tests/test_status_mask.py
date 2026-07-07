@@ -98,6 +98,20 @@ def test_decode_ph_rx_cl_cd_status_bits_no_acid_for_non_ph():
     assert "Redox pump active" in result
 
 
+def test_decode_ph_rx_cl_cd_status_bits_redox_low():
+    """Bit 7 (0x0080) is the Redox Low alarm, only defined for Redox."""
+    result = decode_ph_rx_cl_cd_status_bits(0x0080, "Redox")
+    assert result["Redox Low"] is True
+
+
+@pytest.mark.parametrize("unit", ["pH", "Chlorine", "Conductivity"])
+def test_decode_ph_rx_cl_cd_status_bits_low_key_only_for_redox(unit):
+    """The Low key is emitted only for Redox, never for pH/CL/CD."""
+    # Every bit set - if Low ever leaked into other units it would show up.
+    result = decode_ph_rx_cl_cd_status_bits(0xFFFF, unit)
+    assert f"{unit} Low" not in result
+
+
 def test_decode_ion_status_bits_basic():
     # ION On Target, ION in Pol2
     status = 0x4001
@@ -105,6 +119,13 @@ def test_decode_ion_status_bits_basic():
     assert result["ION On Target"] is True
     assert result["ION in Pol2"] is True
     assert result["ION in dead time"] is False
+
+
+def test_decode_ion_status_bits_low_bit():
+    # Bit 1 represents low production (cannot reach setpoint), not flow.
+    result = decode_ion_status_bits(0x0002)
+    assert result["ION Low"] is True
+    assert "ION Low Flow" not in result
 
 
 def test_decode_ion_status_bits_none():
@@ -119,6 +140,15 @@ def test_decode_hidro_status_bits_basic():
     assert result["HIDRO Module active"] is True
     assert result["HIDRO in Pol1"] is True
     assert result["Pool Cover"] is False
+
+
+def test_decode_hidro_status_bits_low_bit():
+    # Bit 1 represents low production (cannot reach setpoint), not flow.
+    # Flow indicators live on bits 3 (FL1) and 9 (FL2).
+    result = decode_hidro_status_bits(0x0002)
+    assert result["HIDRO Low"] is True
+    assert result["HIDRO Cell Flow FL1"] is False
+    assert "HIDRO Low Flow" not in result
 
 
 def test_decode_hidro_status_bits_none():

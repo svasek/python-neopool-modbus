@@ -85,6 +85,7 @@ def decode_ph_rx_cl_cd_status_bits(status: int | None, unit: str) -> dict[str, b
     """Decode the status bits for pH, Redox, Chlorine, and Conductivity sensors."""
     # Status bits are 16 bits, where each bit represents a status flag
     # Bit 3:  Flow sensor problem
+    # Bit 7:  Low - the module cannot reach the configured setpoint (Redox only)
     # Bit 10: Module control status (flow detection control)
     # Bit 11: Acid pump active (pH only; depends on MBF_PAR_PH_ACID_RELAY_GPIO)
     # Bit 12: Pump active (base pump for pH; dosing pump for Rx/CL/CD)
@@ -104,6 +105,9 @@ def decode_ph_rx_cl_cd_status_bits(status: int | None, unit: str) -> dict[str, b
     # Bit 11 is the acid pump - only meaningful for the pH module
     if unit == "pH":
         result[f"{unit} acid pump active"] = bool(status & 0x0800)
+    # Bit 7 signals a low-production alarm - only defined for the Redox module
+    if unit == "Redox":
+        result[f"{unit} Low"] = bool(status & 0x0080)
     return result
 
 
@@ -111,7 +115,7 @@ def decode_ion_status_bits(status: int | None) -> dict[str, bool]:
     """Decode the status bits for ION sensor."""
     # Status bits are 16 bits, where each bit represents a status flag
     # Bit 0: ION On Target
-    # Bit 1: ION Low Flow
+    # Bit 1: ION Low - the ionization cannot reach the configured setpoint
     # Bit 2: ION Reserved
     # Bit 3: ION Program time exceeded
     # Bit 12: ION in dead time
@@ -123,7 +127,7 @@ def decode_ion_status_bits(status: int | None) -> dict[str, bool]:
         return {}
     return {
         "ION On Target": bool(status & 0x0001),
-        "ION Low Flow": bool(status & 0x0002),
+        "ION Low": bool(status & 0x0002),
         "ION Reserved": bool(status & 0x0004),
         "ION Program time exceeded": bool(status & 0x0008),
         "ION in dead time": bool(status & 0x1000),
@@ -136,7 +140,7 @@ def decode_hidro_status_bits(status: int | None) -> dict[str, bool]:
     """Decode the status bits for HIDRO sensor."""
     # Status bits are 16 bits, where each bit represents a status flag
     # Bit 0: HIDRO On Target
-    # Bit 1: HIDRO Low Flow
+    # Bit 1: HIDRO Low - the hydrolysis cannot reach the configured setpoint
     # Bit 2: HIDRO Reserved
     # Bit 3: HIDRO Cell Flow FL1 (if present)
     # Bit 4: Pool Cover (cover input active)
@@ -149,13 +153,11 @@ def decode_hidro_status_bits(status: int | None) -> dict[str, bool]:
     # Bit 12: HIDRO in dead time
     # Bit 13: HIDRO in Pol1
     # Bit 14: HIDRO in Pol2
-    # Bit 15: HIDRO measurement module detected
-    # Note: HIDRO measurement module is always detected if HIDRO sensor is present
     if status is None:
         return {}
     return {
         "HIDRO On Target": bool(status & 0x0001),
-        "HIDRO Low Flow": bool(status & 0x0002),
+        "HIDRO Low": bool(status & 0x0002),
         "HIDRO Reserved": bool(status & 0x0004),
         "HIDRO Cell Flow FL1": bool(status & 0x0008),  # if present
         "Pool Cover": bool(status & 0x0010),
