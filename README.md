@@ -329,6 +329,7 @@ addresses:
 | `async_set_bitmask_flag(flag, on)`              | packed-bit flags (`HIDRO_COVER_ENABLE`, `HIDRO_TEMP_SHUTDOWN`) with read-modify-write                               |
 | `async_set_setpoint(kind, value, apply=False)`  | pH / ORP / chlorine / heating / intelligent / hydrolysis / smart-temp setpoints via `SetpointKind`                  |
 | `async_set_masked_register(flag, value)`        | values packed into a shared register with a bitmask (`HIDRO_COVER_REDUCTION_PERCENT`, `HIDRO_SHUTDOWN_TEMPERATURE`) |
+| `async_set_config_option(kind, value, apply=True)` | discrete configuration slots via `ConfigKind` (filter-valve mode/period, intelligent filtration minimum time, relay activation delay) |
 | `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                                            |
 | `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                                                    |
 | `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)                           |

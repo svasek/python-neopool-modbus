@@ -3350,6 +3350,54 @@ async def test_async_set_masked_register_propagates_connection_error(config):
 
 
 # ---------------------------------------------------------------------------
+# High-level config-option write method
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", list(neopool_modbus.ConfigKind))
+@pytest.mark.asyncio
+async def test_async_set_config_option_writes_expected_register(config, kind):
+    """Each ConfigKind writes *value* to its register with apply=True and returns the data-key dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._CONFIG_LAYOUT[kind]
+
+    result = await client.async_set_config_option(kind, 42)
+
+    assert result == {data_key: 42}
+    client.async_write_register.assert_awaited_once_with(register, 42, apply=True)
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.asyncio
+async def test_async_set_config_option_forwards_apply_kwarg(config, apply):
+    """``apply`` is forwarded to ``async_write_register`` so callers can batch writes."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._CONFIG_LAYOUT[
+        neopool_modbus.ConfigKind.FILTVALVE_MODE
+    ]
+
+    result = await client.async_set_config_option(
+        neopool_modbus.ConfigKind.FILTVALVE_MODE, 2, apply=apply
+    )
+
+    assert result == {data_key: 2}
+    client.async_write_register.assert_awaited_once_with(register, 2, apply=apply)
+
+
+@pytest.mark.asyncio
+async def test_async_set_config_option_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("gone"))
+    with pytest.raises(NeoPoolConnectionError, match="gone"):
+        await client.async_set_config_option(
+            neopool_modbus.ConfigKind.RELAY_ACTIVATION_DELAY, 30
+        )
+
+
+# ---------------------------------------------------------------------------
 # High-level binary + bitmask config-flag write methods
 # ---------------------------------------------------------------------------
 

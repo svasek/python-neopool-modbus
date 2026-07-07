@@ -48,6 +48,7 @@ from .exceptions import (
 from .registers import (
     _BINARY_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _BITMASK_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _CONFIG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
     _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
@@ -74,6 +75,7 @@ from .registers import (
     TIMER_BLOCKS,
     BinaryConfigFlag,
     BitmaskConfigFlag,
+    ConfigKind,
     MaskedFlag,
     RelayKind,
     RelayMode,
@@ -1323,6 +1325,37 @@ class NeoPoolModbusClient:
         await self.async_write_register(register, new_value, apply=True)
         _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
         return {data_key: new_value}
+
+    async def async_set_config_option(
+        self, kind: ConfigKind, value: int, apply: bool = True
+    ) -> dict[str, Any]:
+        """Write *value* to the discrete configuration slot for *kind*.
+
+        Covers filter-valve mode/period, intelligent-filtration minimum
+        time, and relay activation delay via a single entry point so
+        callers do not need to import the individual register addresses.
+
+        *value* is the raw register value. Any firmware offset or
+        scale-to-UI-label mapping is the caller's responsibility (the
+        device firmware for example adds an internal +10 s offset on
+        ``RELAY_ACTIVATION_DELAY``; the caller must subtract it before
+        writing).
+
+        ``apply`` defaults to True because these are user-visible
+        configuration slots that should persist to EEPROM and restart
+        the affected modules; pass False to batch several writes and
+        commit them together with a final ``apply=True`` call.
+
+        Returns an optimistic-update dict of the coordinator-data key
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        register, data_key = _CONFIG_LAYOUT[kind]
+        await self.async_write_register(register, value, apply=apply)
+        _LOGGER.debug(
+            "Config option %s written: %s (apply=%s)", kind.name, value, apply
+        )
+        return {data_key: value}
 
     @staticmethod
     def _relay_timer_name(relay: RelayKind) -> str:
