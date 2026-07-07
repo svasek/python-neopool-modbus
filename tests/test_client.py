@@ -3195,3 +3195,135 @@ async def test_async_set_manual_filtration_propagates_connection_error(config):
     client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
     with pytest.raises(NeoPoolConnectionError, match="nope"):
         await client.async_set_manual_filtration(True)
+
+
+# ---------------------------------------------------------------------------
+# High-level setpoint + masked-register write methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        neopool_modbus.SetpointKind.HEATING,
+        neopool_modbus.SetpointKind.INTELLIGENT,
+        neopool_modbus.SetpointKind.PH_MAX,
+        neopool_modbus.SetpointKind.PH_MIN,
+        neopool_modbus.SetpointKind.REDOX,
+        neopool_modbus.SetpointKind.CHLORINE,
+        neopool_modbus.SetpointKind.HIDRO,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_setpoint_writes_expected_register(config, kind):
+    """Each SetpointKind writes *value* to its register and returns the data-key dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._SETPOINT_LAYOUT[kind]
+
+    result = await client.async_set_setpoint(kind, 250)
+
+    assert result == {data_key: 250}
+    client.async_write_register.assert_awaited_once_with(register, 250)
+
+
+@pytest.mark.asyncio
+async def test_async_set_setpoint_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
+    with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_setpoint(neopool_modbus.SetpointKind.REDOX, 700)
+
+
+@pytest.mark.parametrize(
+    ("flag", "current", "value", "expected"),
+    [
+        # HIDRO_COVER_REDUCTION_PERCENT: mask 0x00FF, shift 0.
+        # Preserves the high byte, replaces the low byte.
+        (
+            neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT,
+            0x1234,
+            0x05,
+            0x1205,
+        ),
+        # Starting from 0 (cache miss / zeroed register).
+        (
+            neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT,
+            0,
+            50,
+            50,
+        ),
+        # HIDRO_SHUTDOWN_TEMPERATURE: mask 0xFF00, shift 8.
+        # Preserves the low byte, replaces the high byte.
+        (
+            neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE,
+            0x1234,
+            0x05,
+            0x0534,
+        ),
+        (
+            neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE,
+            0x00AB,
+            25,
+            (25 << 8) | 0xAB,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_masked_register_preserves_surrounding_bits(
+    config, flag, current, value, expected
+):
+    """RMW preserves the bits outside *mask* and packs *value* into the slot."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[flag]
+    client._cached_result[data_key] = current
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_masked_register(flag, value)
+
+    assert result == {data_key: expected}
+    client.async_write_register.assert_awaited_once_with(register, expected, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_async_set_masked_register_treats_missing_cache_as_zero(config):
+    """A missing coordinator-data key is treated as 0 (no surrounding bits to keep)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    flag = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[flag]
+    # Ensure the key is absent from the cache.
+    client._cached_result.pop(data_key, None)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_masked_register(flag, 42)
+
+    assert result == {data_key: 42}
+    client.async_write_register.assert_awaited_once_with(register, 42, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_async_set_masked_register_treats_none_cache_as_zero(config):
+    """A cached ``None`` value is coerced to 0 for the RMW."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    flag = neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[flag]
+    client._cached_result[data_key] = None
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_masked_register(flag, 30)
+
+    expected = 30 << 8
+    assert result == {data_key: expected}
+    client.async_write_register.assert_awaited_once_with(register, expected, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_async_set_masked_register_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
+    with pytest.raises(NeoPoolConnectionError, match="nope"):
+        await client.async_set_masked_register(
+            neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT, 10
+        )

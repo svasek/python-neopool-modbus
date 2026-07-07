@@ -47,8 +47,10 @@ from .exceptions import (
 )
 from .registers import (
     _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
+    _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_STATE_KEYS,  # pyright: ignore[reportPrivateUsage]
+    _SETPOINT_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
     COPY_TO_RTC_REGISTER,
@@ -67,8 +69,10 @@ from .registers import (
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
+    MaskedFlag,
     RelayKind,
     RelayMode,
+    SetpointKind,
     TimerRelayMode,
     is_input_register,
     is_valid_relay_gpio,
@@ -1266,6 +1270,48 @@ class NeoPoolModbusClient:
         return await self.async_write_register(
             INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
         )
+
+    async def async_set_setpoint(
+        self, kind: SetpointKind, value: int
+    ) -> dict[str, Any]:
+        """Write *value* to the register that backs *kind*.
+
+        Covers heating, intelligent, pH max/min, redox, chlorine and
+        hydrolysis setpoints via a single entry point so callers do not
+        need to import the individual register addresses. *value* is the
+        already-scaled register value (e.g. 250 for 25.0 °C, 750 for
+        pH 7.50); the method performs no range validation.
+
+        Returns an optimistic-update dict of the coordinator-data key the
+        caller can merge into its own cache without knowing the register
+        layout.
+        """
+        register, data_key = _SETPOINT_LAYOUT[kind]
+        await self.async_write_register(register, value)
+        _LOGGER.debug("Setpoint %s written: %s", kind.name, value)
+        return {data_key: value}
+
+    async def async_set_masked_register(
+        self, flag: MaskedFlag, value: int
+    ) -> dict[str, Any]:
+        """Write *value* into the bitmask slot identified by *flag*.
+
+        Performs a read-modify-write against the last-read cache
+        (:attr:`_cached_result`) so the surrounding bits of the shared
+        register are preserved. Missing cache entries are treated as
+        ``0``. The write is applied with ``apply=True`` to persist the
+        change to EEPROM and restart the affected modules.
+
+        Returns an optimistic-update dict of the coordinator-data key
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        register, mask, shift, data_key = _MASKED_FLAG_LAYOUT[flag]
+        current = int(self._cached_result.get(data_key, 0) or 0)
+        new_value = (current & ~mask) | ((value << shift) & mask)
+        await self.async_write_register(register, new_value, apply=True)
+        _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
+        return {data_key: new_value}
 
     @staticmethod
     def _relay_timer_name(relay: RelayKind) -> str:
