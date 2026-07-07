@@ -41,10 +41,18 @@ from .decoders import (
 from .exceptions import (
     NeoPoolConnectionError,
     NeoPoolError,
+    NeoPoolInvalidStateError,
     NeoPoolModbusError,
     NeoPoolTimeoutError,
 )
 from .registers import (
+    _BINARY_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _BITMASK_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
+    _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    _RELAY_STATE_KEYS,  # pyright: ignore[reportPrivateUsage]
+    _SETPOINT_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
     COPY_TO_RTC_REGISTER,
@@ -58,10 +66,19 @@ from .registers import (
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
     HEATING_SETPOINT_REGISTER,
+    HIDRO_COVER_ENABLE_REGISTER,
     INTELLIGENT_SETPOINT_REGISTER,
+    MANUAL_FILTRATION_REGISTER,
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
     TIMER_BLOCKS,
+    BinaryConfigFlag,
+    BitmaskConfigFlag,
+    MaskedFlag,
+    RelayKind,
+    RelayMode,
+    SetpointKind,
+    TimerRelayMode,
     is_input_register,
     is_valid_relay_gpio,
 )
@@ -75,13 +92,6 @@ from .status_mask import (
 )
 
 _LOGGER = logging.getLogger("neopool_modbus")
-
-AUX_BITMASKS = {
-    1: 0x0008,  # AUX1
-    2: 0x0010,  # AUX2
-    3: 0x0020,  # AUX3
-    4: 0x0040,  # AUX4
-}
 
 # MBF_NOTIFICATION (0x0110) page-change bitmask constants
 _NOTIF_MODBUS = 0x0001  # MBMSK_NOTIF_MODBUS_CHANGED
@@ -1266,6 +1276,175 @@ class NeoPoolModbusClient:
             INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
         )
 
+    async def async_set_setpoint(
+        self, kind: SetpointKind, value: int
+    ) -> dict[str, Any]:
+        """Write *value* to the register that backs *kind*.
+
+        Covers heating, intelligent, pH max/min, redox, chlorine and
+        hydrolysis setpoints via a single entry point so callers do not
+        need to import the individual register addresses. *value* is the
+        already-scaled register value (e.g. 250 for 25.0 °C, 750 for
+        pH 7.50); the method performs no range validation.
+
+        Returns an optimistic-update dict of the coordinator-data key the
+        caller can merge into its own cache without knowing the register
+        layout.
+        """
+        register, data_key = _SETPOINT_LAYOUT[kind]
+        await self.async_write_register(register, value)
+        _LOGGER.debug("Setpoint %s written: %s", kind.name, value)
+        return {data_key: value}
+
+    async def async_set_masked_register(
+        self, flag: MaskedFlag, value: int
+    ) -> dict[str, Any]:
+        """Write *value* into the bitmask slot identified by *flag*.
+
+        Performs a read-modify-write against the last-read cache
+        (:attr:`_cached_result`) so the surrounding bits of the shared
+        register are preserved. Missing cache entries are treated as
+        ``0``. The write is applied with ``apply=True`` to persist the
+        change to EEPROM and restart the affected modules.
+
+        Returns an optimistic-update dict of the coordinator-data key
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        register, mask, shift, data_key = _MASKED_FLAG_LAYOUT[flag]
+        current = int(self._cached_result.get(data_key, 0) or 0)
+        new_value = (current & ~mask) | ((value << shift) & mask)
+        await self.async_write_register(register, new_value, apply=True)
+        _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
+        return {data_key: new_value}
+
+    @staticmethod
+    def _relay_timer_name(relay: RelayKind) -> str:
+        """Return the timer-block name in :data:`TIMER_BLOCKS` for *relay*."""
+        if relay is RelayKind.LIGHT:
+            return "relay_light"
+        return f"relay_aux{relay.value}"
+
+    async def async_set_relay_state(self, relay: RelayKind, on: bool) -> dict[str, Any]:
+        """Turn a manual-mode relay on or off.
+
+        Writes the relay's function code + ``ALWAYS_ON`` when *on* is True,
+        or ``ALWAYS_OFF`` when *on* is False, then commits via EXEC. The
+        relay must currently be in a manual mode (``ALWAYS_ON`` /
+        ``ALWAYS_OFF``); calling this while the relay is in ``ENABLED``
+        (auto / timer-driven) mode raises :class:`NeoPoolInvalidStateError`
+        because the device would ignore the write.
+
+        Returns an optimistic-update dict of the two coordinator-data keys
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        function_register, timer_block_register, function_code = _RELAY_LAYOUT[relay]
+        timer_enable_key, runtime_state_key = _RELAY_STATE_KEYS[relay]
+
+        current_mode = self._cached_result.get(timer_enable_key)
+        if current_mode == TimerRelayMode.ENABLED:
+            raise NeoPoolInvalidStateError(
+                f"Relay {relay.name} is in AUTO mode; cannot control manually"
+            )
+
+        if on:
+            await self.async_write_register(function_register, function_code)
+            await self.async_write_register(
+                timer_block_register, TimerRelayMode.ALWAYS_ON
+            )
+            new_mode = TimerRelayMode.ALWAYS_ON
+        else:
+            await self.async_write_register(
+                timer_block_register, TimerRelayMode.ALWAYS_OFF
+            )
+            new_mode = TimerRelayMode.ALWAYS_OFF
+        await self.async_write_register(EXEC_REGISTER, _EXEC_COMMIT)
+
+        _LOGGER.debug("Relay %s set to %s", relay.name, "ON" if on else "OFF")
+        return {timer_enable_key: new_mode, runtime_state_key: on}
+
+    async def async_set_relay_mode(
+        self, relay: RelayKind, mode: RelayMode
+    ) -> dict[str, Any]:
+        """Switch a relay between AUTO / ALWAYS_ON / ALWAYS_OFF.
+
+        Delegates to :meth:`write_timer`, which preserves the surrounding
+        timer-block fields. Returns an optimistic-update dict with the
+        relay's timer-enable coordinator-data key so the caller can merge
+        it into its own cache.
+        """
+        timer_enable_key, _ = _RELAY_STATE_KEYS[relay]
+        timer_name = self._relay_timer_name(relay)
+        await self.write_timer(timer_name, {"enable": mode.value})
+        _LOGGER.debug("Relay %s mode set to %s", relay.name, mode.name)
+        return {timer_enable_key: mode.value}
+
+    async def async_set_manual_filtration(self, on: bool) -> dict[str, Any]:
+        """Toggle the manual filtration pump.
+
+        Requires the device to be in manual filtration mode
+        (``MBF_PAR_FILT_MODE == 0``); otherwise raises
+        :class:`NeoPoolInvalidStateError` because the pump register is only
+        honoured while manual mode is selected.
+
+        Returns an optimistic-update dict with the ``"Filtration Pump"``
+        coordinator-data key.
+        """
+        if self._cached_result.get("MBF_PAR_FILT_MODE") != 0:
+            raise NeoPoolInvalidStateError(
+                "Device is not in manual filtration mode; set MBF_PAR_FILT_MODE=0 first"
+            )
+        await self.async_write_register(MANUAL_FILTRATION_REGISTER, 1 if on else 0)
+        _LOGGER.debug("Manual filtration set to %s", "ON" if on else "OFF")
+        return {"Filtration Pump": on}
+
+    async def async_set_binary_flag(
+        self, flag: BinaryConfigFlag, on: bool
+    ) -> dict[str, Any]:
+        """Turn a binary configuration flag on or off.
+
+        Covers flags backed by a dedicated on/off register
+        (``CLIMA_ONOFF``, ``SMART_ANTI_FREEZE``, ``UV_MODE``) so callers
+        do not need to import the individual register addresses. Writes
+        ``1`` when *on* is True, ``0`` when False.
+
+        Returns an optimistic-update dict of the coordinator-data key
+        the caller can merge into its own cache without knowing the
+        register layout.
+        """
+        register, data_key = _BINARY_FLAG_LAYOUT[flag]
+        value = 1 if on else 0
+        await self.async_write_register(register, value)
+        _LOGGER.debug("Binary flag %s set to %s", flag.name, value)
+        return {data_key: value}
+
+    async def async_set_bitmask_flag(
+        self, flag: BitmaskConfigFlag, on: bool
+    ) -> dict[str, Any]:
+        """Set or clear a bit inside :data:`HIDRO_COVER_ENABLE_REGISTER`.
+
+        Covers flags packed as bits in a shared register
+        (``HIDRO_COVER_ENABLE``, ``HIDRO_TEMP_SHUTDOWN``). Performs a
+        read-modify-write against the last-read cache
+        (:attr:`_cached_result`) so the surrounding bits are preserved;
+        a missing cache entry is treated as ``0``. The write is applied
+        with ``apply=True`` to persist the change to EEPROM and restart
+        the affected modules.
+
+        Returns an optimistic-update dict of the
+        ``MBF_PAR_HIDRO_COVER_ENABLE`` coordinator-data key with the new
+        register value so the caller can merge it into its own cache.
+        """
+        bit = _BITMASK_FLAG_LAYOUT[flag]
+        current = int(self._cached_result.get("MBF_PAR_HIDRO_COVER_ENABLE", 0) or 0)
+        new_value = current | bit if on else current & ~bit
+        await self.async_write_register(
+            HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
+        )
+        _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
+        return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
+
     def _calculate_avg_response_time(self) -> float | None:
         if not self._response_times:
             return None
@@ -1387,97 +1566,6 @@ class NeoPoolModbusClient:
             )
             raise NeoPoolModbusError(
                 f"Modbus TCP write exception at 0x{address:04X}: {e}"
-            ) from e
-        finally:
-            end = time.monotonic()
-            self._write_response_times.append(end - start)
-
-    """ Manual controller for AUX relays (1-4) """
-
-    async def async_write_aux_relay(self, relay_index: int, on: bool) -> None:
-        """Write state of an AUX relay (1-4) using function 0x10 (Write Multiple Registers).
-
-        Returns ``None`` on success. Raises :exc:`ValueError` if *relay_index*
-        is outside the supported range (1-4). Raises :exc:`NeoPoolError`
-        (specifically :exc:`NeoPoolConnectionError`, :exc:`NeoPoolTimeoutError`,
-        or :exc:`NeoPoolModbusError`) on any connection, read, or write error;
-        the four follow-up writes (relay enable, relay value, 0x0289 commit
-        trigger, EXEC_REGISTER) each validate ``isError()`` so a silent
-        device-side rejection cannot be reported as success.
-        """
-        if relay_index not in AUX_BITMASKS:
-            raise ValueError(f"Invalid AUX relay index: {relay_index} (expected 1-4)")
-        aux_bit = AUX_BITMASKS[relay_index]
-        addr = 0x010E
-        start = time.monotonic()
-        self._total_writes += 1
-
-        def _check(result: Any, message: str) -> None:
-            """Raise NeoPoolModbusError if a Modbus result indicates an error."""
-            if result.isError():
-                raise NeoPoolModbusError(message)
-
-        try:
-            client = await self.get_client()
-            if client is None or not client.connected:
-                raise NeoPoolConnectionError(  # noqa: TRY301  # raise inside try so the surrounding handler bumps diagnostics uniformly
-                    f"Modbus client connection failed to {self._host}:{self._port}"
-                )
-            # Read current relay state
-            current_result = await client.read_input_registers(
-                address=addr, count=1, device_id=self._unit
-            )
-            _check(
-                current_result, f"Modbus read error from 0x{addr:04X}: {current_result}"
-            )
-            current = current_result.registers[0]
-            # Set or clear the aux bit
-            value = current | aux_bit if on else current & ~aux_bit
-            result = await client.write_registers(
-                address=addr, values=[1], device_id=self._unit
-            )
-            _check(
-                result, f"Modbus write error at 0x{addr:04X} (relay enable): {result}"
-            )
-            result = await client.write_registers(
-                address=addr, values=[value], device_id=self._unit
-            )
-            _check(
-                result, f"Modbus write error at 0x{addr:04X} (relay value): {result}"
-            )
-            _LOGGER.debug("Wrote relay state at 0x%04X: 0x%04X", addr, value)
-            result = await client.write_registers(
-                address=0x0289, values=[0], device_id=self._unit
-            )
-            _check(result, f"Modbus write error at 0x0289 (commit trigger): {result}")
-            result = await client.write_registers(
-                address=EXEC_REGISTER, values=[1], device_id=self._unit
-            )
-            _check(
-                result,
-                f"Modbus write error at 0x{EXEC_REGISTER:04X} (EXEC): {result}",
-            )
-            self._successful_write_ops += 1
-            self._successful_writes.append((f"0x{addr:04X}", time.time()))
-
-        except NeoPoolError:
-            self._failed_writes[f"0x{addr:04X}"] = (
-                self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-            )
-            raise
-        except TimeoutError as e:
-            self._failed_writes[f"0x{addr:04X}"] = (
-                self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-            )
-            raise NeoPoolTimeoutError(
-                f"Modbus TCP AUX relay write timed out at 0x{addr:04X}: {e}"
-            ) from e
-        except Exception as e:
-            self._failed_writes[f"0x{addr:04X}"] = (
-                self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-            )
-            raise NeoPoolModbusError(
-                f"Modbus TCP AUX relay write failed at 0x{addr:04X}: {e}"
             ) from e
         finally:
             end = time.monotonic()

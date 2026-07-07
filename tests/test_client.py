@@ -23,6 +23,7 @@ from pymodbus.framer import FramerType
 import neopool_modbus.client as neopool_modbus
 from neopool_modbus.exceptions import (
     NeoPoolConnectionError,
+    NeoPoolInvalidStateError,
     NeoPoolModbusError,
     NeoPoolTimeoutError,
 )
@@ -334,21 +335,6 @@ async def test_write_timer_failure(config):
     client._perform_write_timer = AsyncMock(side_effect=Exception("timer fail"))
     with pytest.raises(Exception, match="timer fail"):
         await client.write_timer("filtration1", {"on": 0})
-
-
-@pytest.mark.asyncio
-async def test_async_write_aux_relay_relay_index_invalid(config):
-    """Invalid relay_index raises ValueError fail-fast, before any Modbus
-    traffic is attempted."""
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    # Patch get_client so the assertion below can prove it was never reached.
-    sentinel = AsyncMock(side_effect=AssertionError("get_client must not be called"))
-    client.get_client = sentinel  # type: ignore[method-assign]
-
-    with pytest.raises(ValueError, match="Invalid AUX relay index: 99"):
-        await client.async_write_aux_relay(99, True)
-
-    sentinel.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1332,183 +1318,6 @@ async def test_perform_write_timer_unknown_block_name_raises_keyerror(config):
     # bump, so an invalid name does not pollute the write totals.
     assert client._total_writes == initial_total
     assert client._failed_writes == {}
-
-
-@pytest.mark.asyncio
-async def test_async_write_aux_relay_on_and_off(config, monkeypatch):
-    """Test async_write_aux_relay turns AUX relay ON and OFF successfully."""
-
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    fake_modbus = AsyncMock()
-    fake_modbus.connected = True
-
-    # Helper for simulating Modbus reply with current relay state (simulate relay is OFF)
-    class DummyResp:
-        def __init__(self, regs, is_error=False):
-            self.registers = regs
-            self.isError = lambda: is_error
-
-    # Always return relay state 0 (all relays OFF) when reading
-    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0]))
-    # All write_registers succeed
-    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([], False))
-
-    # Patch get_client() to always return fake_modbus
-    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-
-    # Test turning AUX1 ON (relay_index=1, on=True)
-    await client.async_write_aux_relay(1, True)
-    # Test turning AUX1 OFF (relay_index=1, on=False)
-    # Set initial relay state as ON (bit 0x0008 set)
-    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0x0008]))
-    await client.async_write_aux_relay(1, False)
-
-    # Verify read and write calls for ON
-    # read_input_registers should be called for 0x010E (relay state)
-    _args, kwargs = fake_modbus.read_input_registers.await_args
-    assert kwargs["address"] == 0x010E
-    assert kwargs["count"] == 1
-
-    # write_registers is called for the sequence to update relay state and execute config
-    # Order of calls: enable register, relay write, disable, execute
-    assert fake_modbus.write_registers.await_count == 8  # should be 4 per call
-
-
-@pytest.mark.asyncio
-async def test_async_write_aux_relay_not_connected(config, monkeypatch):
-    """Test async_write_aux_relay raises NeoPoolConnectionError if client is not connected.
-
-    Regression: the inner pre-bump and the outer NeoPoolError handler used
-    to both increment _failed_writes for the same address, double-counting
-    a single failed operation in diagnostics.
-    """
-
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    fake_modbus = AsyncMock()
-    fake_modbus.connected = False
-
-    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-
-    with pytest.raises(NeoPoolConnectionError):
-        await client.async_write_aux_relay(1, True)
-    assert client._failed_writes.get("0x010E") == 1
-
-
-@pytest.mark.asyncio
-async def test_async_write_aux_relay_read_error(config, monkeypatch):
-    """Test async_write_aux_relay handles Modbus error during read_input_registers."""
-
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    fake_modbus = AsyncMock()
-    fake_modbus.connected = True
-
-    # Simulate Modbus error
-    class DummyResp:
-        def __init__(self):
-            self.isError = lambda: True
-
-    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp())
-    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-
-    with pytest.raises(NeoPoolModbusError):
-        await client.async_write_aux_relay(1, True)
-
-
-@pytest.mark.asyncio
-async def test_async_write_aux_relay_write_exception(config, monkeypatch):
-    """Test async_write_aux_relay raises NeoPoolModbusError if write_registers throws exception."""
-
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    fake_modbus = AsyncMock()
-    fake_modbus.connected = True
-
-    class DummyResp:
-        def __init__(self, regs):
-            self.registers = regs
-            self.isError = lambda: False
-
-    # First, reading relay state works
-    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0]))
-    # write_registers throws exception
-    fake_modbus.write_registers = AsyncMock(side_effect=Exception("write fail"))
-    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-
-    with pytest.raises(NeoPoolModbusError):
-        await client.async_write_aux_relay(1, True)
-
-
-@pytest.mark.asyncio
-async def test_async_write_aux_relay_timeout(config, monkeypatch):
-    """A TimeoutError raised by pymodbus during one of the AUX relay writes
-    must surface as NeoPoolTimeoutError, not NeoPoolModbusError."""
-
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    fake_modbus = AsyncMock()
-    fake_modbus.connected = True
-
-    class DummyResp:
-        def __init__(self, regs):
-            self.registers = regs
-            self.isError = lambda: False
-
-    # Read of current relay state succeeds, then write_registers times out
-    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0]))
-    fake_modbus.write_registers = AsyncMock(side_effect=TimeoutError("aux t/o"))
-    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-
-    with pytest.raises(NeoPoolTimeoutError):
-        await client.async_write_aux_relay(1, True)
-    assert client._failed_writes.get("0x010E", 0) == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("failing_call", "expected_msg_fragment"),
-    [
-        (1, "relay enable"),  # 1st write: address=addr, values=[1]
-        (2, "relay value"),  # 2nd write: address=addr, values=[value]
-        (3, "0x0289 (commit trigger)"),  # 3rd write: address=0x0289
-        (4, "EXEC"),  # 4th write: address=EXEC_REGISTER
-    ],
-)
-async def test_async_write_aux_relay_write_iserror(
-    config, monkeypatch, failing_call, expected_msg_fragment
-):
-    """Each of the four AUX relay writes must escalate isError() into a NeoPoolModbusError.
-
-    Sugar Valley devices can return a Modbus exception response from write_registers
-    while pymodbus surfaces it as a successful Python call (no raise). The client
-    must therefore inspect ``result.isError()`` after every write so that a silent
-    exception response cannot be counted as a successful relay update.
-    """
-    client = neopool_modbus.NeoPoolModbusClient(config)
-    fake_modbus = AsyncMock()
-    fake_modbus.connected = True
-
-    class DummyResp:
-        def __init__(self, regs=None, is_error=False):
-            self.registers = regs or []
-            self.isError = lambda: is_error
-
-    # Read succeeds with a known relay state
-    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0]))
-
-    # The first `failing_call - 1` writes succeed, the `failing_call`-th returns isError.
-    call_counter = {"n": 0}
-
-    async def write_registers_side_effect(*args, **kwargs):
-        call_counter["n"] += 1
-        return DummyResp(is_error=(call_counter["n"] == failing_call))
-
-    fake_modbus.write_registers = AsyncMock(side_effect=write_registers_side_effect)
-    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-
-    with pytest.raises(NeoPoolModbusError) as excinfo:
-        await client.async_write_aux_relay(1, True)
-
-    assert expected_msg_fragment in str(excinfo.value)
-    # Subsequent writes must NOT happen after a failed step
-    assert call_counter["n"] == failing_call
 
 
 @pytest.mark.asyncio
@@ -3193,3 +3002,494 @@ async def test_async_set_temp_setpoint_apply_override(config):
         call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
         call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=False),
     ]
+
+
+# ---------------------------------------------------------------------------
+# High-level relay + manual-filtration write methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "relay",
+    [
+        neopool_modbus.RelayKind.LIGHT,
+        neopool_modbus.RelayKind.AUX1,
+        neopool_modbus.RelayKind.AUX2,
+        neopool_modbus.RelayKind.AUX3,
+        neopool_modbus.RelayKind.AUX4,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_state_on_writes_function_and_always_on(config, relay):
+    """Turning a relay on writes function code + ALWAYS_ON, then commits via EXEC."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    # Cache is empty by default (relay not in AUTO); guard passes.
+    function_register, timer_block_register, function_code = (
+        neopool_modbus._RELAY_LAYOUT[relay]
+    )
+    timer_enable_key, runtime_state_key = neopool_modbus._RELAY_STATE_KEYS[relay]
+
+    result = await client.async_set_relay_state(relay, True)
+
+    assert result == {
+        timer_enable_key: neopool_modbus.TimerRelayMode.ALWAYS_ON,
+        runtime_state_key: True,
+    }
+    assert client.async_write_register.await_args_list == [
+        call(function_register, function_code),
+        call(timer_block_register, neopool_modbus.TimerRelayMode.ALWAYS_ON),
+        call(neopool_modbus.EXEC_REGISTER, neopool_modbus._EXEC_COMMIT),
+    ]
+
+
+@pytest.mark.parametrize(
+    "relay",
+    [
+        neopool_modbus.RelayKind.LIGHT,
+        neopool_modbus.RelayKind.AUX1,
+        neopool_modbus.RelayKind.AUX2,
+        neopool_modbus.RelayKind.AUX3,
+        neopool_modbus.RelayKind.AUX4,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_state_off_writes_always_off_only(config, relay):
+    """Turning a relay off writes ALWAYS_OFF (no function code), then EXEC."""
+    from unittest.mock import call
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    _, timer_block_register, _ = neopool_modbus._RELAY_LAYOUT[relay]
+    timer_enable_key, runtime_state_key = neopool_modbus._RELAY_STATE_KEYS[relay]
+
+    result = await client.async_set_relay_state(relay, False)
+
+    assert result == {
+        timer_enable_key: neopool_modbus.TimerRelayMode.ALWAYS_OFF,
+        runtime_state_key: False,
+    }
+    assert client.async_write_register.await_args_list == [
+        call(timer_block_register, neopool_modbus.TimerRelayMode.ALWAYS_OFF),
+        call(neopool_modbus.EXEC_REGISTER, neopool_modbus._EXEC_COMMIT),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_state_rejects_auto_mode(config):
+    """A relay currently in ENABLED (auto) mode cannot be driven manually."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    timer_enable_key, _ = neopool_modbus._RELAY_STATE_KEYS[
+        neopool_modbus.RelayKind.AUX1
+    ]
+    client._cached_result[timer_enable_key] = neopool_modbus.TimerRelayMode.ENABLED
+
+    with pytest.raises(NeoPoolInvalidStateError, match="AUX1 is in AUTO mode"):
+        await client.async_set_relay_state(neopool_modbus.RelayKind.AUX1, True)
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_state_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
+    with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_relay_state(neopool_modbus.RelayKind.LIGHT, True)
+
+
+@pytest.mark.parametrize(
+    "relay",
+    [
+        neopool_modbus.RelayKind.LIGHT,
+        neopool_modbus.RelayKind.AUX1,
+        neopool_modbus.RelayKind.AUX2,
+        neopool_modbus.RelayKind.AUX3,
+        neopool_modbus.RelayKind.AUX4,
+    ],
+)
+@pytest.mark.parametrize(
+    "mode",
+    [
+        neopool_modbus.RelayMode.AUTO,
+        neopool_modbus.RelayMode.ALWAYS_ON,
+        neopool_modbus.RelayMode.ALWAYS_OFF,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_mode_writes_enable_via_write_timer(config, relay, mode):
+    """Each (RelayKind, RelayMode) pair maps to a write_timer call with the enum's wire value."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.write_timer = AsyncMock(return_value=True)
+    timer_enable_key, _ = neopool_modbus._RELAY_STATE_KEYS[relay]
+    expected_name = (
+        "relay_light"
+        if relay is neopool_modbus.RelayKind.LIGHT
+        else f"relay_aux{relay.value}"
+    )
+
+    result = await client.async_set_relay_mode(relay, mode)
+
+    assert result == {timer_enable_key: mode.value}
+    client.write_timer.assert_awaited_once_with(expected_name, {"enable": mode.value})
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_mode_propagates_connection_error(config):
+    """write_timer failures propagate through async_set_relay_mode."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.write_timer = AsyncMock(side_effect=NeoPoolConnectionError("no route"))
+    with pytest.raises(NeoPoolConnectionError, match="no route"):
+        await client.async_set_relay_mode(
+            neopool_modbus.RelayKind.AUX2, neopool_modbus.RelayMode.AUTO
+        )
+
+
+@pytest.mark.parametrize("on", [True, False])
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_writes_bit(config, on):
+    """Writes 1 when *on* is True, 0 when False; returns the optimistic dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_FILT_MODE"] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_manual_filtration(on)
+
+    assert result == {"Filtration Pump": on}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.MANUAL_FILTRATION_REGISTER, 1 if on else 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_rejects_non_manual_mode(config):
+    """Refuses the write when MBF_PAR_FILT_MODE is not 0 (manual)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    client._cached_result["MBF_PAR_FILT_MODE"] = 1  # auto
+
+    with pytest.raises(NeoPoolInvalidStateError, match="not in manual filtration"):
+        await client.async_set_manual_filtration(True)
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_rejects_when_mode_unknown(config):
+    """An unread MBF_PAR_FILT_MODE (missing from cache) is treated as non-manual."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+
+    with pytest.raises(NeoPoolInvalidStateError):
+        await client.async_set_manual_filtration(False)
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_manual_filtration_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_FILT_MODE"] = 0
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
+    with pytest.raises(NeoPoolConnectionError, match="nope"):
+        await client.async_set_manual_filtration(True)
+
+
+# ---------------------------------------------------------------------------
+# High-level setpoint + masked-register write methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        neopool_modbus.SetpointKind.HEATING,
+        neopool_modbus.SetpointKind.INTELLIGENT,
+        neopool_modbus.SetpointKind.PH_MAX,
+        neopool_modbus.SetpointKind.PH_MIN,
+        neopool_modbus.SetpointKind.REDOX,
+        neopool_modbus.SetpointKind.CHLORINE,
+        neopool_modbus.SetpointKind.HIDRO,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_setpoint_writes_expected_register(config, kind):
+    """Each SetpointKind writes *value* to its register and returns the data-key dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._SETPOINT_LAYOUT[kind]
+
+    result = await client.async_set_setpoint(kind, 250)
+
+    assert result == {data_key: 250}
+    client.async_write_register.assert_awaited_once_with(register, 250)
+
+
+@pytest.mark.asyncio
+async def test_async_set_setpoint_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
+    with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_setpoint(neopool_modbus.SetpointKind.REDOX, 700)
+
+
+@pytest.mark.parametrize(
+    ("flag", "current", "value", "expected"),
+    [
+        # HIDRO_COVER_REDUCTION_PERCENT: mask 0x00FF, shift 0.
+        # Preserves the high byte, replaces the low byte.
+        (
+            neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT,
+            0x1234,
+            0x05,
+            0x1205,
+        ),
+        # Starting from 0 (cache miss / zeroed register).
+        (
+            neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT,
+            0,
+            50,
+            50,
+        ),
+        # HIDRO_SHUTDOWN_TEMPERATURE: mask 0xFF00, shift 8.
+        # Preserves the low byte, replaces the high byte.
+        (
+            neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE,
+            0x1234,
+            0x05,
+            0x0534,
+        ),
+        (
+            neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE,
+            0x00AB,
+            25,
+            (25 << 8) | 0xAB,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_masked_register_preserves_surrounding_bits(
+    config, flag, current, value, expected
+):
+    """RMW preserves the bits outside *mask* and packs *value* into the slot."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[flag]
+    client._cached_result[data_key] = current
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_masked_register(flag, value)
+
+    assert result == {data_key: expected}
+    client.async_write_register.assert_awaited_once_with(register, expected, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_async_set_masked_register_treats_missing_cache_as_zero(config):
+    """A missing coordinator-data key is treated as 0 (no surrounding bits to keep)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    flag = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[flag]
+    # Ensure the key is absent from the cache.
+    client._cached_result.pop(data_key, None)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_masked_register(flag, 42)
+
+    assert result == {data_key: 42}
+    client.async_write_register.assert_awaited_once_with(register, 42, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_async_set_masked_register_treats_none_cache_as_zero(config):
+    """A cached ``None`` value is coerced to 0 for the RMW."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    flag = neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[flag]
+    client._cached_result[data_key] = None
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_masked_register(flag, 30)
+
+    expected = 30 << 8
+    assert result == {data_key: expected}
+    client.async_write_register.assert_awaited_once_with(register, expected, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_async_set_masked_register_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
+    with pytest.raises(NeoPoolConnectionError, match="nope"):
+        await client.async_set_masked_register(
+            neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT, 10
+        )
+
+
+# ---------------------------------------------------------------------------
+# High-level binary + bitmask config-flag write methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        neopool_modbus.BinaryConfigFlag.CLIMA_ONOFF,
+        neopool_modbus.BinaryConfigFlag.SMART_ANTI_FREEZE,
+        neopool_modbus.BinaryConfigFlag.UV_MODE,
+    ],
+)
+@pytest.mark.parametrize("on", [True, False])
+@pytest.mark.asyncio
+async def test_async_set_binary_flag_writes_expected_register(config, flag, on):
+    """Each BinaryConfigFlag writes 1/0 to its register and returns the data-key dict."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._BINARY_FLAG_LAYOUT[flag]
+    expected = 1 if on else 0
+
+    result = await client.async_set_binary_flag(flag, on)
+
+    assert result == {data_key: expected}
+    client.async_write_register.assert_awaited_once_with(register, expected)
+
+
+@pytest.mark.asyncio
+async def test_async_set_binary_flag_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
+    with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_binary_flag(
+            neopool_modbus.BinaryConfigFlag.UV_MODE, True
+        )
+
+
+@pytest.mark.parametrize(
+    ("flag", "current", "on", "expected"),
+    [
+        # HIDRO_COVER_ENABLE (bit 0): set from a cleared register.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE,
+            0,
+            True,
+            0x0001,
+        ),
+        # HIDRO_COVER_ENABLE: clear from a fully-set register, keep bit 1.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE,
+            0x0003,
+            False,
+            0x0002,
+        ),
+        # HIDRO_TEMP_SHUTDOWN (bit 1): set while keeping bit 0.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN,
+            0x0001,
+            True,
+            0x0003,
+        ),
+        # HIDRO_TEMP_SHUTDOWN: clear from a fully-set register, keep bit 0.
+        (
+            neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN,
+            0x0003,
+            False,
+            0x0001,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_preserves_other_bits(
+    config, flag, current, on, expected
+):
+    """RMW flips the target bit while keeping every other bit intact."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = current
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_bitmask_flag(flag, on)
+
+    assert result == {"MBF_PAR_HIDRO_COVER_ENABLE": expected}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, expected, apply=True
+    )
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE,
+        neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN,
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_idempotent_when_bit_already_matches(config, flag):
+    """Turning a bit ON while it is already set (or OFF while cleared) still writes."""
+    bit = neopool_modbus._BITMASK_FLAG_LAYOUT[flag]
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = bit
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    # bit is set; turning it ON again keeps the value.
+    result_on = await client.async_set_bitmask_flag(flag, True)
+    assert result_on == {"MBF_PAR_HIDRO_COVER_ENABLE": bit}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, bit, apply=True
+    )
+
+    # Clear the cache and try the OFF-when-already-clear path.
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    result_off = await client.async_set_bitmask_flag(flag, False)
+    assert result_off == {"MBF_PAR_HIDRO_COVER_ENABLE": 0}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, 0, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_treats_missing_cache_as_zero(config):
+    """A missing MBF_PAR_HIDRO_COVER_ENABLE cache entry is treated as 0."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result.pop("MBF_PAR_HIDRO_COVER_ENABLE", None)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    flag = neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN
+    bit = neopool_modbus._BITMASK_FLAG_LAYOUT[flag]
+
+    result = await client.async_set_bitmask_flag(flag, True)
+
+    assert result == {"MBF_PAR_HIDRO_COVER_ENABLE": bit}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, bit, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_treats_none_cache_as_zero(config):
+    """A cached ``None`` value is coerced to 0 for the RMW."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = None
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    flag = neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE
+    bit = neopool_modbus._BITMASK_FLAG_LAYOUT[flag]
+
+    result = await client.async_set_bitmask_flag(flag, True)
+
+    assert result == {"MBF_PAR_HIDRO_COVER_ENABLE": bit}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER, bit, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_propagates_connection_error(config):
+    """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("nope"))
+    with pytest.raises(NeoPoolConnectionError, match="nope"):
+        await client.async_set_bitmask_flag(
+            neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE, True
+        )

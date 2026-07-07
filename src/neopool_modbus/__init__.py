@@ -33,6 +33,7 @@ from .client import NeoPoolModbusClient
 from .exceptions import (
     NeoPoolConnectionError,
     NeoPoolError,
+    NeoPoolInvalidStateError,
     NeoPoolModbusError,
     NeoPoolTimeoutError,
 )
@@ -43,6 +44,7 @@ __version__ = "3.6.0"
 __all__ = [
     "NeoPoolConnectionError",
     "NeoPoolError",
+    "NeoPoolInvalidStateError",
     "NeoPoolModbusClient",
     "NeoPoolModbusError",
     "NeoPoolTimeoutError",
