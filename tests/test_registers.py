@@ -28,12 +28,14 @@ import pytest
 from neopool_modbus.registers import (
     _BINARY_FLAG_LAYOUT,
     _BITMASK_FLAG_LAYOUT,
+    _CONFIG_LAYOUT,
     _MASKED_FLAG_LAYOUT,
     _RELAY_LAYOUT,
     _RELAY_STATE_KEYS,
     _SETPOINT_LAYOUT,
     BinaryConfigFlag,
     BitmaskConfigFlag,
+    ConfigKind,
     MaskedFlag,
     RelayKind,
     RelayMode,
@@ -99,6 +101,14 @@ def test_masked_flag_layout_covers_every_flag(flag: MaskedFlag) -> None:
     assert register > 0
     assert mask > 0
     assert shift >= 0
+    assert data_key.startswith("MBF_PAR_")
+
+
+@pytest.mark.parametrize("kind", list(ConfigKind))
+def test_config_layout_covers_every_kind(kind: ConfigKind) -> None:
+    """Every :class:`ConfigKind` member must have a layout entry."""
+    register, data_key = _CONFIG_LAYOUT[kind]
+    assert register > 0
     assert data_key.startswith("MBF_PAR_")
 
 

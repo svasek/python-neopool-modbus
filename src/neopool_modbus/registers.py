@@ -110,6 +110,32 @@ class MaskedFlag(IntEnum):
     HIDRO_SHUTDOWN_TEMPERATURE = 1
 
 
+class ConfigKind(IntEnum):
+    """Identifier for a discrete configuration slot.
+
+    Written via :meth:`async_set_config_option`. Unlike
+    :class:`SetpointKind` (continuous PID/control targets), these are
+    single-register enumerated or discrete-choice configuration values
+    with no bit-packing:
+
+    - ``FILTVALVE_MODE``: filter-valve backwash mode selector.
+    - ``FILTVALVE_PERIOD_MINUTES``: backwash repeat interval in minutes.
+    - ``INTELLIGENT_FILT_MIN_TIME``: minimum filtration time for the
+      intelligent filtration mode.
+    - ``RELAY_ACTIVATION_DELAY``: relay activation delay in seconds.
+      The device firmware adds an internal +10 s offset; callers pass
+      the raw register value (subtract 10 from the human-facing value).
+
+    Value labels, scale, and firmware offsets are the caller's
+    responsibility - this layer only knows how to write raw integers.
+    """
+
+    FILTVALVE_MODE = 0
+    FILTVALVE_PERIOD_MINUTES = 1
+    INTELLIGENT_FILT_MIN_TIME = 2
+    RELAY_ACTIVATION_DELAY = 3
+
+
 # Single-register write addresses with special semantics.
 MANUAL_FILTRATION_REGISTER = 0x0413
 EEPROM_SAVE_REGISTER = 0x02F0  # MBF_SAVE_TO_EEPROM
@@ -403,6 +429,23 @@ _MASKED_FLAG_LAYOUT: Mapping[MaskedFlag, tuple[int, int, int, str]] = {
     ),
 }
 
+# (register, coordinator_data_key) for each discrete config slot.
+_CONFIG_LAYOUT: Mapping[ConfigKind, tuple[int, str]] = {
+    ConfigKind.FILTVALVE_MODE: (FILTVALVE_MODE_REGISTER, "MBF_PAR_FILTVALVE_MODE"),
+    ConfigKind.FILTVALVE_PERIOD_MINUTES: (
+        FILTVALVE_PERIOD_REGISTER,
+        "MBF_PAR_FILTVALVE_PERIOD_MINUTES",
+    ),
+    ConfigKind.INTELLIGENT_FILT_MIN_TIME: (
+        INTELLIGENT_FILT_MIN_TIME_REGISTER,
+        "MBF_PAR_INTELLIGENT_FILT_MIN_TIME",
+    ),
+    ConfigKind.RELAY_ACTIVATION_DELAY: (
+        RELAY_ACTIVATION_DELAY_REGISTER,
+        "MBF_PAR_RELAY_ACTIVATION_DELAY",
+    ),
+}
+
 __all__ = [
     "AUX1_FUNCTION_CODE",
     "AUX1_FUNCTION_REGISTER",
@@ -424,6 +467,7 @@ __all__ = [
     "CLIMA_ONOFF_REGISTER",
     "COMMAND_REGISTERS",
     "COPY_TO_RTC_REGISTER",
+    "ConfigKind",
     "DEFAULT_MODBUS_FRAMER",
     "DEVICE_TIME_REGISTER",
     "EEPROM_SAVE_REGISTER",
