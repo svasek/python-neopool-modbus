@@ -1382,7 +1382,9 @@ class NeoPoolModbusClient:
         function_register, timer_block_register, function_code = _RELAY_LAYOUT[relay]
         timer_enable_key, runtime_state_key = _RELAY_STATE_KEYS[relay]
 
-        current_mode = self._cached_result.get(timer_enable_key)
+        timer_name = self._relay_timer_name(relay)
+        cached_timer = self._cached_timers.get(timer_name)
+        current_mode = cached_timer.get("enable") if cached_timer else None
         if current_mode == TimerRelayMode.ENABLED:
             raise NeoPoolInvalidStateError(
                 f"Relay {relay.name} is in AUTO mode; cannot control manually",
