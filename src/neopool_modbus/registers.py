@@ -367,11 +367,12 @@ _RELAY_LAYOUT: Mapping[RelayKind, tuple[int, int, int]] = {
     ),
 }
 
-# (timer_enable_key, runtime_state_key) mirrors the decoded output of
-# :meth:`NeoPoolModbusClient.async_read_all` (``relay_light_enable``,
-# ``relay_aux{n}_enable``, ``Pool Light``, ``AUX{n}``). The client returns
-# these keys in the optimistic-update dict so the caller can merge them into
-# its own state cache without knowing the decoding rules.
+# (timer_enable_key, runtime_state_key) for each relay. These are the keys
+# :meth:`NeoPoolModbusClient.async_set_relay_state` returns in its
+# optimistic-update dict (``relay_light_enable``, ``relay_aux{n}_enable``,
+# ``Pool Light``, ``AUX{n}``) so the caller can merge them into its own state
+# cache without knowing the register layout. The enable value itself comes
+# from the timer blocks read by :meth:`read_all_timers`, not async_read_all.
 _RELAY_STATE_KEYS: Mapping[RelayKind, tuple[str, str]] = {
     RelayKind.LIGHT: ("relay_light_enable", "Pool Light"),
     RelayKind.AUX1: ("relay_aux1_enable", "AUX1"),

@@ -3079,7 +3079,32 @@ async def test_async_set_relay_state_off_writes_always_off_only(config, relay):
 
 @pytest.mark.asyncio
 async def test_async_set_relay_state_rejects_auto_mode(config):
-    """A relay currently in ENABLED (auto) mode cannot be driven manually."""
+    """A relay currently in ENABLED (auto) mode cannot be driven manually.
+
+    The mode is read from the timer cache (populated by read_all_timers),
+    seeded here the way production does, not from _cached_result.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    timer_name = client._relay_timer_name(neopool_modbus.RelayKind.AUX1)
+    client._cached_timers[timer_name] = {
+        "enable": neopool_modbus.TimerRelayMode.ENABLED
+    }
+
+    with pytest.raises(NeoPoolInvalidStateError, match="AUX1 is in AUTO mode") as exc:
+        await client.async_set_relay_state(neopool_modbus.RelayKind.AUX1, True)
+    assert exc.value.reason == neopool_modbus.InvalidStateReason.RELAY_IN_AUTO_MODE
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_set_relay_state_ignores_stale_cached_result(config):
+    """The guard reads the timer cache, not _cached_result.
+
+    async_read_all never emits a relay_*_enable key, so a value stuck in
+    _cached_result must not satisfy the guard. With the timer cache empty,
+    the write proceeds even though _cached_result claims AUTO mode.
+    """
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock()
     timer_enable_key, _ = neopool_modbus._RELAY_STATE_KEYS[
@@ -3087,10 +3112,8 @@ async def test_async_set_relay_state_rejects_auto_mode(config):
     ]
     client._cached_result[timer_enable_key] = neopool_modbus.TimerRelayMode.ENABLED
 
-    with pytest.raises(NeoPoolInvalidStateError, match="AUX1 is in AUTO mode") as exc:
-        await client.async_set_relay_state(neopool_modbus.RelayKind.AUX1, True)
-    assert exc.value.reason == neopool_modbus.InvalidStateReason.RELAY_IN_AUTO_MODE
-    client.async_write_register.assert_not_awaited()
+    await client.async_set_relay_state(neopool_modbus.RelayKind.AUX1, True)
+    client.async_write_register.assert_awaited()
 
 
 @pytest.mark.asyncio
