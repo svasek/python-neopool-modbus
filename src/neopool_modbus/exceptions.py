@@ -35,6 +35,7 @@ class InvalidStateReason(Enum):
 
     RELAY_IN_AUTO_MODE = "relay_in_auto_mode"
     FILTRATION_NOT_IN_MANUAL_MODE = "filtration_not_in_manual_mode"
+    FILTRATION_BOOST_ACTIVE = "filtration_boost_active"
 
 
 class NeoPoolError(Exception):

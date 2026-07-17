@@ -242,6 +242,11 @@ def encode_cell_boost(name: str) -> int:
     )
 
 
+def is_cell_boost_active(reg_val: int | None) -> bool:
+    """Return True when the cell boost is running (not inactive/unknown)."""
+    return decode_cell_boost(reg_val) not in (None, CELL_BOOST_MODE_LABELS[0])
+
+
 # Filtration-speed indices map to bits 4-6 of MBF_PAR_FILTRATION_CONF.
 # "Off" is not a value of these bits -- it is signalled by the filtration
 # mode register or the manual filtration-state register, and must be set
@@ -737,6 +742,7 @@ __all__ = [
     "get_machine_name",
     "get_timer_interval",
     "hhmm_to_seconds",
+    "is_cell_boost_active",
     "is_hydrolysis_in_percent",
     "modbus_regs_to_ascii",
     "modbus_regs_to_hex_string",
