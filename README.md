@@ -324,7 +324,7 @@ addresses:
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `async_set_relay_state(relay, on)`              | drives the light or an AUX relay (`RelayKind.LIGHT`, `AUX1..4`) via its function + timer-block registers            |
 | `async_set_relay_mode(relay, mode)`             | switches a relay between `RelayMode.AUTO` / `ALWAYS_ON` / `ALWAYS_OFF` via `write_timer`                            |
-| `async_set_manual_filtration(on)`               | toggles the filtration pump, gated on `MBF_PAR_FILT_MODE == 0` (manual mode)                                        |
+| `async_set_manual_filtration(on)`               | toggles the filtration pump, gated on `MBF_PAR_FILT_MODE == 0` (manual mode) and no active cell boost                |
 | `async_set_binary_flag(flag, on)`               | on/off configuration flags (`CLIMA_ONOFF`, `SMART_ANTI_FREEZE`, `UV_MODE`)                                          |
 | `async_set_bitmask_flag(flag, on)`              | packed-bit flags (`HIDRO_COVER_ENABLE`, `HIDRO_TEMP_SHUTDOWN`) with read-modify-write                               |
 | `async_set_setpoint(kind, value, apply=False)`  | pH / ORP / chlorine / heating / intelligent / hydrolysis / smart-temp setpoints via `SetpointKind`                  |
@@ -376,9 +376,9 @@ await client.async_set_setpoint(SetpointKind.PH_MIN, 720)
 
 Guards live inside the library. `async_set_relay_state` refuses to
 control a relay whose timer is in `AUTO` mode; `async_set_manual_filtration`
-refuses when `MBF_PAR_FILT_MODE` is not zero. Both raise
-`NeoPoolInvalidStateError`, which callers catch and translate into
-user-facing messages:
+refuses when `MBF_PAR_FILT_MODE` is not zero or while a cell boost is active.
+Each raises `NeoPoolInvalidStateError` with a `reason` (`InvalidStateReason`)
+that callers catch and translate into user-facing messages:
 
 ```python
 from neopool_modbus import NeoPoolInvalidStateError, NeoPoolModbusClient

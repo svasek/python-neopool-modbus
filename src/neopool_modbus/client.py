@@ -1427,15 +1427,10 @@ class NeoPoolModbusClient:
     async def async_set_manual_filtration(self, on: bool) -> dict[str, Any]:
         """Toggle the manual filtration pump.
 
-        Requires the device to be in manual filtration mode
-        (``MBF_PAR_FILT_MODE == 0``); otherwise raises
-        :class:`NeoPoolInvalidStateError` because the pump register is only
-        honoured while manual mode is selected.
-
-        Also refuses the write while a cell boost is running: the controller
-        forces the pump on for the duration of the boost and ignores manual
-        toggling, so the attempt is rejected with
-        :attr:`InvalidStateReason.FILTRATION_BOOST_ACTIVE`.
+        Raises :class:`NeoPoolInvalidStateError` when the device is not in
+        manual filtration mode (``MBF_PAR_FILT_MODE == 0``), or while a cell
+        boost is running (the controller forces the pump on and ignores
+        manual toggling); the ``reason`` discriminates the two.
 
         Returns an optimistic-update dict with the ``"Filtration Pump"``
         coordinator-data key.
