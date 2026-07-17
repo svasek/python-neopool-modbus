@@ -54,6 +54,7 @@ from neopool_modbus.decoders import (
     get_machine_name,
     get_timer_interval,
     hhmm_to_seconds,
+    is_cell_boost_active,
     is_hydrolysis_in_percent,
     modbus_regs_to_ascii,
     modbus_regs_to_hex_string,
@@ -655,6 +656,21 @@ def test_cell_boost_round_trip():
     """encode -> decode round trips for every public mode."""
     for name in ("inactive", "active", "active_redox"):
         assert decode_cell_boost(encode_cell_boost(name)) == name
+
+
+@pytest.mark.parametrize(
+    ("reg_val", "expected"),
+    [
+        (0x85A0, True),  # active
+        (0x05A0, True),  # active_redox
+        (0x8000, True),  # active (no-redox variant)
+        (0x0000, False),  # inactive
+        (None, False),  # unread
+        (0x0100, False),  # unrecognised pattern -> decode None
+    ],
+)
+def test_is_cell_boost_active(reg_val, expected):
+    assert is_cell_boost_active(reg_val) is expected
 
 
 # ---------------------------------------------------------------------------

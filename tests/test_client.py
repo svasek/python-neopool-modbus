@@ -3222,6 +3222,21 @@ async def test_async_set_manual_filtration_rejects_when_mode_unknown(config):
 
 
 @pytest.mark.asyncio
+async def test_async_set_manual_filtration_rejects_when_boost_active(config):
+    """Refuses the write while a cell boost is running, even in manual mode."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock()
+    # Manual mode clears the first guard; an active boost must still block.
+    client._cached_result["MBF_PAR_FILT_MODE"] = 0
+    client._cached_result["MBF_CELL_BOOST"] = neopool_modbus.encode_cell_boost("active")
+
+    with pytest.raises(NeoPoolInvalidStateError, match="cell boost is active") as exc:
+        await client.async_set_manual_filtration(True)
+    assert exc.value.reason == neopool_modbus.InvalidStateReason.FILTRATION_BOOST_ACTIVE
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_async_set_manual_filtration_propagates_connection_error(config):
     """A NeoPoolConnectionError from the underlying write surfaces to the caller."""
     client = neopool_modbus.NeoPoolModbusClient(config)

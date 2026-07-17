@@ -35,6 +35,7 @@ from .decoders import (
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
+    is_cell_boost_active,
     modbus_regs_to_ascii,
     parse_timer_block,
 )
@@ -1431,6 +1432,11 @@ class NeoPoolModbusClient:
         :class:`NeoPoolInvalidStateError` because the pump register is only
         honoured while manual mode is selected.
 
+        Also refuses the write while a cell boost is running: the controller
+        forces the pump on for the duration of the boost and ignores manual
+        toggling, so the attempt is rejected with
+        :attr:`InvalidStateReason.FILTRATION_BOOST_ACTIVE`.
+
         Returns an optimistic-update dict with the ``"Filtration Pump"``
         coordinator-data key.
         """
@@ -1438,6 +1444,12 @@ class NeoPoolModbusClient:
             raise NeoPoolInvalidStateError(
                 "Device is not in manual filtration mode; set MBF_PAR_FILT_MODE=0 first",
                 reason=InvalidStateReason.FILTRATION_NOT_IN_MANUAL_MODE,
+            )
+        if is_cell_boost_active(self._cached_result.get("MBF_CELL_BOOST")):
+            raise NeoPoolInvalidStateError(
+                "Manual filtration cannot be toggled while a cell boost is active; "
+                "stop the boost first",
+                reason=InvalidStateReason.FILTRATION_BOOST_ACTIVE,
             )
         await self.async_write_register(MANUAL_FILTRATION_REGISTER, 1 if on else 0)
         _LOGGER.debug("Manual filtration set to %s", "ON" if on else "OFF")
