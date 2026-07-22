@@ -35,6 +35,7 @@ from .decoders import (
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
+    get_filtration_pump_type,
     is_cell_boost_active,
     modbus_regs_to_ascii,
     parse_timer_block,
@@ -1111,21 +1112,28 @@ class NeoPoolModbusClient:
         self._last_notification = notification
         self._last_was_full_read = force_full
 
-        # Fixup: on some installations the filtration relay bit in
-        # MBF_RELAY_STATE is not set even when the filtration pump is running.
-        # MBF_PAR_FILTRATION_STATE (0x0421) is the authoritative source per vendor docs.
+        # Fixup: on installations with a VARIABLE-SPEED filtration pump, the
+        # filtration relay bit in MBF_RELAY_STATE is not a reliable on/off signal.
+        # Such a pump is powered continuously and controlled by speed, so the bit
+        # may stay clear even when the pump runs. MBF_PAR_FILTRATION_STATE (0x0421)
+        # is the authoritative source per vendor docs.
         # However, MBF_PAR_FILTRATION_STATE lives on the INSTALLER page which is
         # only re-read on notification or periodic full reads. When it comes from
         # cache it may be stale, so we must NOT let a stale cached value override
         # the fresh relay bit from MBF_RELAY_STATE (read every poll cycle).
         # Only apply the fixup when the INSTALLER page was actually read this cycle.
+        # Single-speed pumps are excluded: their relay bit faithfully tracks the
+        # relay, so applying the fixup would wrongly report the pump as ON when the
+        # relay is off (e.g. during a backwash STOP_ALL_MODULES).
         installer_fresh = force_full or bool(notification & _NOTIF_INSTALLER)
         filt_gpio = result.get("MBF_PAR_FILT_GPIO", 0) or 0
         filtration_state = result.get("MBF_PAR_FILTRATION_STATE")
+        filtration_conf = result.get("MBF_PAR_FILTRATION_CONF", 0) or 0
         if (
             installer_fresh
             and is_valid_relay_gpio(filt_gpio)
             and filtration_state in (0, 1)
+            and get_filtration_pump_type(filtration_conf)
         ):
             authoritative = filtration_state == 1
             if result.get("Filtration Pump") != authoritative:

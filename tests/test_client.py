@@ -2288,6 +2288,11 @@ async def test_filtration_state_fixup_v8_07_firmware(config, monkeypatch):
     installer_block1[10] = 2  # MBF_PAR_FILT_GPIO = 2 (relay 2, bit 1)
     installer_block1[25] = 1  # MBF_PAR_FILTRATION_STATE = 1 (pump running)
 
+    # rr05 (0x0502, 14 registers): MBF_PAR_FILTRATION_CONF at index 13 (0x050F).
+    # Nibble 1 = variable-speed pump, required for the fixup to apply.
+    reg05 = [0] * 14
+    reg05[13] = 1  # MBF_PAR_FILTRATION_CONF = variable-speed
+
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=[
             DummyResp([1, 3, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),  # rr00
@@ -2300,7 +2305,7 @@ async def test_filtration_state_fixup_v8_07_firmware(config, monkeypatch):
             ),  # installer block 1 (0x0408, 31) - has MBF_PAR_FILTRATION_STATE
             DummyResp([0] * 13),  # installer block 2 (0x0427)
             DummyResp([0] * 8),  # installer block 3 (0x04E8, FILTVALVE)
-            DummyResp([0] * 14),  # rr05
+            DummyResp(reg05),  # rr05 (0x0502, 14) - has MBF_PAR_FILTRATION_CONF
             DummyResp([0] * 13),  # rr06
         ]
     )
@@ -2339,6 +2344,9 @@ async def test_filtration_state_fixup_pump_off_agrees(config, monkeypatch):
     installer_block1[10] = 2  # MBF_PAR_FILT_GPIO = 2 (relay 2, bit 1)
     installer_block1[25] = 0  # MBF_PAR_FILTRATION_STATE = 0 (pump off - agrees)
 
+    reg05 = [0] * 14
+    reg05[13] = 1  # MBF_PAR_FILTRATION_CONF = variable-speed (fixup path enabled)
+
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=[
             DummyResp([1, 3, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
@@ -2349,7 +2357,7 @@ async def test_filtration_state_fixup_pump_off_agrees(config, monkeypatch):
             DummyResp(installer_block1),
             DummyResp([0] * 13),
             DummyResp([0] * 8),
-            DummyResp([0] * 14),
+            DummyResp(reg05),
             DummyResp([0] * 13),
         ]
     )
@@ -2387,6 +2395,9 @@ async def test_filtration_state_fixup_relay_on_but_state_off(config, monkeypatch
     installer_block1[10] = 2  # MBF_PAR_FILT_GPIO = 2 (relay 2, bit 1)
     installer_block1[25] = 0  # MBF_PAR_FILTRATION_STATE = 0 (authoritative: pump off)
 
+    reg05 = [0] * 14
+    reg05[13] = 1  # MBF_PAR_FILTRATION_CONF = variable-speed (fixup path enabled)
+
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=[
             DummyResp([1, 3, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
@@ -2397,7 +2408,7 @@ async def test_filtration_state_fixup_relay_on_but_state_off(config, monkeypatch
             DummyResp(installer_block1),
             DummyResp([0] * 13),
             DummyResp([0] * 8),
-            DummyResp([0] * 14),
+            DummyResp(reg05),
             DummyResp([0] * 13),
         ]
     )
@@ -2412,6 +2423,65 @@ async def test_filtration_state_fixup_relay_on_but_state_off(config, monkeypatch
     )
     assert not (result["MBF_RELAY_STATE"] & 0x0002), (
         "MBF_RELAY_STATE bit 1 should be cleared to match the authoritative register"
+    )
+
+
+@pytest.mark.asyncio
+async def test_filtration_state_fixup_skipped_for_single_speed_pump(
+    config, monkeypatch
+):
+    """Single-speed pumps must not get the fixup, so backwash reads OFF correctly.
+
+    On a single-speed pump the MBF_RELAY_STATE bit faithfully tracks the relay. During a
+    display backwash the firmware runs STOP_ALL_MODULES: the relay bit goes to 0 while the
+    cached MBF_PAR_FILTRATION_STATE stays 1. The fixup must NOT fire here (it only applies to
+    variable-speed pumps), so Filtration Pump stays False and the relay bit is left untouched.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    reg01 = [0] * 18
+    reg01[14] = 0x0000  # MBF_RELAY_STATE - bit 1 clear (relay off during backwash)
+
+    installer_block1 = [0] * 31
+    installer_block1[10] = 2  # MBF_PAR_FILT_GPIO = 2 (relay 2, bit 1)
+    installer_block1[25] = 1  # MBF_PAR_FILTRATION_STATE = 1 (stale: menu keeps it set)
+
+    reg05 = [0] * 14
+    reg05[13] = 0  # MBF_PAR_FILTRATION_CONF = single-speed (fixup path disabled)
+
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=[
+            DummyResp([1, 3, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            DummyResp([0] * 20),
+            DummyResp([0, 0]),
+            DummyResp([0] * 13),
+            DummyResp([0] * 4),
+            DummyResp(installer_block1),
+            DummyResp([0] * 13),
+            DummyResp([0] * 8),
+            DummyResp(reg05),
+            DummyResp([0] * 13),
+        ]
+    )
+    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp(reg01))
+
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client._perform_read_all()
+
+    assert result["Filtration Pump"] is False, (
+        "Single-speed pump: fixup must not override the relay bit, so pump reads OFF"
+    )
+    assert not (result["MBF_RELAY_STATE"] & 0x0002), (
+        "Single-speed pump: MBF_RELAY_STATE bit 1 must be left as read (clear)"
     )
 
 
