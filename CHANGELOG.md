@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.1](https://github.com/svasek/python-neopool-modbus/compare/v4.3.0...v4.3.1) (2026-07-22)
+
+
+### 🐛 Bug Fixes
+
+* **client:** gate filtration-state fixup to variable-speed pumps ([#52](https://github.com/svasek/python-neopool-modbus/issues/52)) ([86596ad](https://github.com/svasek/python-neopool-modbus/commit/86596add9ebe63965131e7ba8072b04dfcae68a8))
+
 ## [4.3.0](https://github.com/svasek/python-neopool-modbus/compare/v4.2.1...v4.3.0) (2026-07-17)
 
 
