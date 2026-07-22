@@ -433,6 +433,9 @@ unknown filtration mode name; those are not transport failures.
 - High-level decoded views in `async_read_all` (`filtration_mode`,
   `cell_boost_mode`, `installed_modules`) and 32-bit register pairs
   (`MBF_PAR_TIME`, `CELL_RUNTIME_TOTAL`, ...) collapsed into single keys
+- On variable-speed pumps the derived `Filtration Pump` state is taken from
+  `MBF_PAR_FILTRATION_STATE`, whose relay bit is not a reliable on/off signal;
+  single-speed pumps keep the faithful `MBF_RELAY_STATE` bit
 - Named write operations for filtration mode / speed, cell boost, temp
   setpoint, time sync, error clear, EEPROM save, user-counter reset
 - Pure capability predicates over a register snapshot, so an integration
