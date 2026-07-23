@@ -284,7 +284,7 @@ def encode_filtration_speed(name: str) -> int:
 # those states are internal and not selectable through the standard UI,
 # so this codec deliberately covers only the user-facing subset.
 FILTVALVE_MODE_LABELS: dict[int, str] = {
-    1: "enabled",
+    1: "auto",
     3: "always_on",
     4: "always_off",
 }

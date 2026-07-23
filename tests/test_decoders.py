@@ -1089,7 +1089,7 @@ def test_cell_boost_mode_labels() -> None:
 
 def test_filtvalve_mode_labels() -> None:
     assert FILTVALVE_MODE_LABELS == {
-        1: "enabled",
+        1: "auto",
         3: "always_on",
         4: "always_off",
     }
@@ -1119,7 +1119,7 @@ def test_decode_filtvalve_mode_none_returns_none() -> None:
 @pytest.mark.parametrize(
     ("reg_val", "expected"),
     [
-        (1, "enabled"),
+        (1, "auto"),
         (3, "always_on"),
         (4, "always_off"),
     ],
@@ -1136,7 +1136,7 @@ def test_decode_filtvalve_mode_unknown_returns_none(reg_val: int) -> None:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("enabled", 1),
+        ("auto", 1),
         ("always_on", 3),
         ("always_off", 4),
     ],

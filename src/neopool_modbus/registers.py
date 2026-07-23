@@ -66,6 +66,20 @@ class RelayMode(IntEnum):
     ALWAYS_OFF = 4
 
 
+class FiltValveMode(IntEnum):
+    """High-level filter-valve mode exposed by :meth:`async_set_filtvalve_mode`.
+
+    The valve mode register (MBF_PAR_FILTVALVE_MODE, 0x04E9) mirrors the
+    relay timer-enable values: ``AUTO`` runs firmware-scheduled backwashes,
+    while ``ALWAYS_ON`` / ``ALWAYS_OFF`` pin the valve. Parallels
+    :class:`RelayMode`.
+    """
+
+    AUTO = 1
+    ALWAYS_ON = 3
+    ALWAYS_OFF = 4
+
+
 class BinaryConfigFlag(IntEnum):
     """Configuration flags backed by a dedicated on/off register."""
 
@@ -505,6 +519,7 @@ __all__ = [
     "FILTVALVE_MODE_REGISTER",
     "FILTVALVE_PERIOD_REGISTER",
     "FILTVALVE_REMAINING_REGISTER",
+    "FiltValveMode",
     "GPIO_REGISTERS",
     "HEATING_SETPOINT_REGISTER",
     "HIDRO_COVER_ENABLE_BIT",

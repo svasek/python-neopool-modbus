@@ -324,6 +324,7 @@ addresses:
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `async_set_relay_state(relay, on)`              | drives the light or an AUX relay (`RelayKind.LIGHT`, `AUX1..4`) via its function + timer-block registers            |
 | `async_set_relay_mode(relay, mode)`             | switches a relay between `RelayMode.AUTO` / `ALWAYS_ON` / `ALWAYS_OFF` via `write_timer`                            |
+| `async_set_filtvalve_mode(mode, apply=True)`    | switches the filter valve between `FiltValveMode.AUTO` / `ALWAYS_ON` / `ALWAYS_OFF` (parallels `async_set_relay_mode`) |
 | `async_set_manual_filtration(on)`               | toggles the filtration pump, gated on `MBF_PAR_FILT_MODE == 0` (manual mode) and no active cell boost                |
 | `async_set_binary_flag(flag, on)`               | on/off configuration flags (`CLIMA_ONOFF`, `SMART_ANTI_FREEZE`, `UV_MODE`)                                          |
 | `async_set_bitmask_flag(flag, on)`              | packed-bit flags (`HIDRO_COVER_ENABLE`, `HIDRO_TEMP_SHUTDOWN`) with read-modify-write                               |
@@ -333,8 +334,8 @@ addresses:
 | `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                                            |
 | `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                                                    |
 | `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)                           |
-| `async_start_backwash(apply=False)`             | starts a backwash on automatic filter-valve units by writing the configured cleaning duration into `MBF_PAR_FILTVALVE_REMAINING`; raises `NeoPoolInvalidStateError` when no interval is set |
-| `async_stop_backwash(apply=False)`              | stops a running backwash by writing 0 to `MBF_PAR_FILTVALVE_REMAINING`; the valve returns to the filtration position |
+| `async_start_backwash(apply=False)`             | starts a backwash on automatic filter-valve units by writing the configured cleaning duration into `MBF_PAR_FILTVALVE_REMAINING`; raises `NeoPoolInvalidStateError` when no interval is set or the valve is in `AUTO` mode |
+| `async_stop_backwash(apply=False)`              | stops a running backwash by writing 0 to `MBF_PAR_FILTVALVE_REMAINING`; the valve returns to the filtration position; raises `NeoPoolInvalidStateError` in `AUTO` mode |
 | `async_set_temp_setpoint(raw, apply=True)`      | writes the same scaled value to heating + intelligent registers in sync                                             |
 | `async_clear_errors()`                          | one-shot to `MBF_ESCAPE`                                                                                            |
 | `async_save_to_eeprom()`                        | one-shot to `MBF_SAVE_TO_EEPROM`                                                                                    |

@@ -3106,6 +3106,86 @@ async def test_async_stop_backwash_apply_override(config):
     )
 
 
+@pytest.mark.asyncio
+async def test_async_start_backwash_raises_when_valve_in_auto(config):
+    """A manual start is rejected while the valve schedules backwashes itself."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {
+        "MBF_PAR_FILTVALVE_MODE": neopool_modbus.FiltValveMode.AUTO,
+        "MBF_PAR_FILTVALVE_INTERVAL": 150,
+    }
+    client.async_write_register = AsyncMock()
+
+    with pytest.raises(
+        neopool_modbus.NeoPoolInvalidStateError, match="AUTO mode"
+    ) as excinfo:
+        await client.async_start_backwash()
+
+    assert (
+        excinfo.value.reason is neopool_modbus.InvalidStateReason.FILTVALVE_IN_AUTO_MODE
+    )
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_stop_backwash_raises_when_valve_in_auto(config):
+    """A manual stop is rejected in AUTO mode; the firmware owns the countdown."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {
+        "MBF_PAR_FILTVALVE_MODE": neopool_modbus.FiltValveMode.AUTO
+    }
+    client.async_write_register = AsyncMock()
+
+    with pytest.raises(
+        neopool_modbus.NeoPoolInvalidStateError, match="AUTO mode"
+    ) as excinfo:
+        await client.async_stop_backwash()
+
+    assert (
+        excinfo.value.reason is neopool_modbus.InvalidStateReason.FILTVALVE_IN_AUTO_MODE
+    )
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    [
+        neopool_modbus.FiltValveMode.AUTO,
+        neopool_modbus.FiltValveMode.ALWAYS_ON,
+        neopool_modbus.FiltValveMode.ALWAYS_OFF,
+    ],
+)
+async def test_async_set_filtvalve_mode_writes_register(config, mode):
+    """Setting the valve mode writes its value to the mode register."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_set_filtvalve_mode(mode)
+
+    assert result == {"MBF_PAR_FILTVALVE_MODE": mode.value}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_MODE_REGISTER, mode.value, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_set_filtvalve_mode_forwards_apply_kwarg(config):
+    """The caller can batch the mode write with apply=False."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_set_filtvalve_mode(
+        neopool_modbus.FiltValveMode.ALWAYS_OFF, apply=False
+    )
+
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_MODE_REGISTER,
+        neopool_modbus.FiltValveMode.ALWAYS_OFF.value,
+        apply=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Command shortcuts (clear errors / save EEPROM / reset user counters)
 # ---------------------------------------------------------------------------

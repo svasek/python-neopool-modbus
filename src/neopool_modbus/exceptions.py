@@ -37,6 +37,7 @@ class InvalidStateReason(Enum):
     FILTRATION_NOT_IN_MANUAL_MODE = "filtration_not_in_manual_mode"
     FILTRATION_BOOST_ACTIVE = "filtration_boost_active"
     FILTVALVE_INTERVAL_NOT_SET = "filtvalve_interval_not_set"
+    FILTVALVE_IN_AUTO_MODE = "filtvalve_in_auto_mode"
 
 
 class NeoPoolError(Exception):
