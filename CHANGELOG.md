@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.1](https://github.com/svasek/python-neopool-modbus/compare/v4.5.0...v4.5.1) (2026-07-23)
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🐛 guard backwash against auto mode and align filtvalve API with relays ([#58](https://github.com/svasek/python-neopool-modbus/issues/58)) ([8109819](https://github.com/svasek/python-neopool-modbus/commit/81098195c6cf45413ac9b3de7c6636febf9545ae))
+
 ## [4.5.0](https://github.com/svasek/python-neopool-modbus/compare/v4.4.0...v4.5.0) (2026-07-23)
 
 
