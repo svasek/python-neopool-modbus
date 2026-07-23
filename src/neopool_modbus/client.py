@@ -71,6 +71,7 @@ from .registers import (
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
     FILTVALVE_INTERVAL_REGISTER,
+    FILTVALVE_MODE_REGISTER,
     FILTVALVE_REMAINING_REGISTER,
     HEATING_SETPOINT_REGISTER,
     HIDRO_COVER_ENABLE_REGISTER,
@@ -82,6 +83,7 @@ from .registers import (
     BinaryConfigFlag,
     BitmaskConfigFlag,
     ConfigKind,
+    FiltValveMode,
     MaskedFlag,
     RelayKind,
     RelayMode,
@@ -1257,13 +1259,16 @@ class NeoPoolModbusClient:
         :meth:`async_read_all` cache when available, else read fresh.
 
         Raises :class:`NeoPoolInvalidStateError` if no cleaning interval is
-        configured (missing or 0), since there is no duration to run.
+        configured (missing or 0), since there is no duration to run, or if
+        the valve is in ``AUTO`` mode (firmware drives backwashes on its own;
+        a manual start is ignored), mirroring :meth:`async_set_relay_state`.
 
         ``apply`` defaults to False: MBF_PAR_FILTVALVE_REMAINING is a runtime
         countdown, so an EEPROM save + EXEC is unnecessary and only wears the
         controller. A plain write starts the cycle immediately. Pass True to
         force a persist + restart.
         """
+        self._raise_if_filtvalve_auto("start")
         interval = self._cached_result.get("MBF_PAR_FILTVALVE_INTERVAL")
         if interval is None:
             regs = await self.async_read_register(FILTVALVE_INTERVAL_REGISTER)
@@ -1287,13 +1292,51 @@ class NeoPoolModbusClient:
         countdown resets to 0. Safe to call when no backwash is active (it
         simply keeps the register at 0).
 
+        Raises :class:`NeoPoolInvalidStateError` if the valve is in ``AUTO``
+        mode, matching :meth:`async_start_backwash`: the firmware owns the
+        countdown there and a manual stop is ignored.
+
         ``apply`` defaults to False, matching :meth:`async_start_backwash`:
         MBF_PAR_FILTVALVE_REMAINING is a runtime countdown, so no EEPROM save
         + EXEC is needed to stop the cycle. Pass True for a persist + restart.
         """
+        self._raise_if_filtvalve_auto("stop")
         return await self.async_write_register(
             FILTVALVE_REMAINING_REGISTER, 0, apply=apply
         )
+
+    def _raise_if_filtvalve_auto(self, action: str) -> None:
+        """Reject a manual backwash *action* while the valve is in AUTO mode.
+
+        Mirrors the AUTO-mode guard in :meth:`async_set_relay_state`: in AUTO
+        the firmware schedules backwashes itself and ignores manual writes to
+        the remaining-time register, so surfacing a clear error beats a silent
+        no-op.
+        """
+        if self._cached_result.get("MBF_PAR_FILTVALVE_MODE") == FiltValveMode.AUTO:
+            raise NeoPoolInvalidStateError(
+                f"Filter valve is in AUTO mode; cannot {action} a backwash manually",
+                reason=InvalidStateReason.FILTVALVE_IN_AUTO_MODE,
+            )
+
+    async def async_set_filtvalve_mode(
+        self, mode: FiltValveMode, apply: bool = True
+    ) -> dict[str, Any] | None:
+        """Switch the filter valve between AUTO / ALWAYS_ON / ALWAYS_OFF.
+
+        Parallels :meth:`async_set_relay_mode`, but the valve mode lives in a
+        dedicated register (MBF_PAR_FILTVALVE_MODE, 0x04E9) rather than a timer
+        block, so it writes directly. Returns an optimistic-update dict with
+        the ``MBF_PAR_FILTVALVE_MODE`` coordinator-data key.
+
+        ``apply`` defaults to True: the mode is a user-visible configuration
+        slot that should persist to EEPROM and restart the affected modules.
+        """
+        await self.async_write_register(
+            FILTVALVE_MODE_REGISTER, mode.value, apply=apply
+        )
+        _LOGGER.debug("Filter valve mode set to %s", mode.name)
+        return {"MBF_PAR_FILTVALVE_MODE": mode.value}
 
     async def async_clear_errors(self) -> dict[str, Any] | None:
         """Clear all device error messages (writes 1 to MBF_ESCAPE)."""
