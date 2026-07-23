@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0](https://github.com/svasek/python-neopool-modbus/compare/v4.3.1...v4.4.0) (2026-07-23)
+
+
+### ✨ Features
+
+* **client:** ✨ add async_start_backwash via FILTVALVE registers ([#54](https://github.com/svasek/python-neopool-modbus/issues/54)) ([4e434d5](https://github.com/svasek/python-neopool-modbus/commit/4e434d575f6718e88471587b62592e9985329446))
+
 ## [4.3.1](https://github.com/svasek/python-neopool-modbus/compare/v4.3.0...v4.3.1) (2026-07-22)
 
 
