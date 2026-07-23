@@ -193,6 +193,14 @@ FILTVALVE_PERIOD_REGISTER = 0x04ED  # MBF_PAR_FILTVALVE_PERIOD_MINUTES
 FILTVALVE_INTERVAL_REGISTER = 0x04EE  # MBF_PAR_FILTVALVE_INTERVAL
 FILTVALVE_REMAINING_REGISTER = 0x04EF  # MBF_PAR_FILTVALVE_REMAINING
 
+# Countdown registers decrement once per second while a cycle runs, so a
+# read-back right after a write almost never equals the written value. Skip
+# verification for these (unlike COMMAND_REGISTERS, they do not auto-clear to
+# 0; they count down from the written value).
+COUNTDOWN_REGISTERS = {
+    FILTVALVE_REMAINING_REGISTER,
+}
+
 # Relay function/timer-block addresses and function codes.
 # Each AUX relay has a timer-block start address, a function-select register,
 # and a bitmask that identifies the relay in MBF_RELAY_STATE.
@@ -476,6 +484,7 @@ __all__ = [
     "CLIMA_ONOFF_REGISTER",
     "COMMAND_REGISTERS",
     "COPY_TO_RTC_REGISTER",
+    "COUNTDOWN_REGISTERS",
     "ConfigKind",
     "DEFAULT_MODBUS_FRAMER",
     "DEVICE_TIME_REGISTER",

@@ -972,7 +972,38 @@ async def test_perform_write_command_register_no_mismatch_warning(
 
 
 @pytest.mark.asyncio
-async def test_perform_write_register_write_isError(config, monkeypatch):
+async def test_perform_write_countdown_register_no_mismatch_warning(
+    config, monkeypatch, caplog
+):
+    """Countdown registers decrement per second; no mismatch warning expected.
+
+    FILTVALVE_REMAINING (0x04EF) starts a backwash and then counts down once
+    per second, so a verify-after-write reads a value already lower than what
+    was written. Unlike a command register it does not reset to 0, so it lives
+    in COUNTDOWN_REGISTERS rather than COMMAND_REGISTERS.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.isError = lambda: is_error
+            self.registers = [regs]
+
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp(150, False))
+    # Read-back returns a lower value (already counted down by 1 second).
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp(149, False))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        result = await client._perform_write_register(
+            neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150
+        )
+    assert result is not None
+    assert "Write verification mismatch" not in caplog.text
     """Test _perform_write_register returns None if write_registers returns error."""
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
@@ -2996,13 +3027,16 @@ async def test_async_start_backwash_uses_cached_interval(config):
     assert result == {"ok": True}
     client.async_read_register.assert_not_awaited()
     client.async_write_register.assert_awaited_once_with(
-        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=True
+        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=False
     )
 
 
 @pytest.mark.asyncio
 async def test_async_start_backwash_falls_back_to_modbus_read(config):
-    """Cold path: cache miss -> read the interval register, sleep, then write."""
+    """Cold path: cache miss -> read the interval register, sleep, then write.
+
+    Also exercises the apply=True override (default is False).
+    """
     client = neopool_modbus.NeoPoolModbusClient(config)
     client._cached_result = {}
     client.async_read_register = AsyncMock(return_value=[150])
@@ -3014,14 +3048,14 @@ async def test_async_start_backwash_falls_back_to_modbus_read(config):
         sleeps.append(delay)
 
     with patch("neopool_modbus.client.asyncio.sleep", new=fake_sleep):
-        await client.async_start_backwash(apply=False)
+        await client.async_start_backwash(apply=True)
 
     client.async_read_register.assert_awaited_once_with(
         neopool_modbus.FILTVALVE_INTERVAL_REGISTER
     )
     assert sleeps == [0.1]
     client.async_write_register.assert_awaited_once_with(
-        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=False
+        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=True
     )
 
 
@@ -3043,6 +3077,33 @@ async def test_async_start_backwash_raises_when_interval_unset(config):
         is neopool_modbus.InvalidStateReason.FILTVALVE_INTERVAL_NOT_SET
     )
     client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_stop_backwash_writes_zero(config):
+    """Stopping a backwash writes 0 to the remaining-time register."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_stop_backwash()
+
+    assert result == {"ok": True}
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 0, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_stop_backwash_apply_override(config):
+    """The caller can request a persisted stop with apply=True."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_stop_backwash(apply=True)
+
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 0, apply=True
+    )
 
 
 # ---------------------------------------------------------------------------
