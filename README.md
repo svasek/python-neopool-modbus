@@ -333,7 +333,8 @@ addresses:
 | `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                                            |
 | `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                                                    |
 | `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)                           |
-| `async_start_backwash(apply=True)`              | starts a backwash on automatic filter-valve units by writing the configured cleaning duration into `MBF_PAR_FILTVALVE_REMAINING`; raises `NeoPoolInvalidStateError` when no interval is set |
+| `async_start_backwash(apply=False)`             | starts a backwash on automatic filter-valve units by writing the configured cleaning duration into `MBF_PAR_FILTVALVE_REMAINING`; raises `NeoPoolInvalidStateError` when no interval is set |
+| `async_stop_backwash(apply=False)`              | stops a running backwash by writing 0 to `MBF_PAR_FILTVALVE_REMAINING`; the valve returns to the filtration position |
 | `async_set_temp_setpoint(raw, apply=True)`      | writes the same scaled value to heating + intelligent registers in sync                                             |
 | `async_clear_errors()`                          | one-shot to `MBF_ESCAPE`                                                                                            |
 | `async_save_to_eeprom()`                        | one-shot to `MBF_SAVE_TO_EEPROM`                                                                                    |
@@ -439,8 +440,9 @@ unknown filtration mode name; those are not transport failures.
   single-speed pumps keep the faithful `MBF_RELAY_STATE` bit
 - Named write operations for filtration mode / speed, cell boost, temp
   setpoint, time sync, error clear, EEPROM save, user-counter reset
-- Backwash start for automatic filter-valve units via `async_start_backwash`,
-  driven through the FILTVALVE registers rather than the filtration mode
+- Backwash start/stop for automatic filter-valve units via
+  `async_start_backwash` / `async_stop_backwash`, driven through the FILTVALVE
+  registers rather than the filtration mode
 - Pure capability predicates over a register snapshot, so an integration
   can drive UI gating both on live data and on a persisted offline copy
 - Exponential connection retry with bounded backoff

@@ -60,6 +60,7 @@ from .registers import (
     CELL_BOOST_REGISTER,
     COMMAND_REGISTERS,
     COPY_TO_RTC_REGISTER,
+    COUNTDOWN_REGISTERS,
     DEFAULT_MODBUS_FRAMER,
     DEVICE_TIME_REGISTER,
     EEPROM_SAVE_REGISTER,
@@ -1245,7 +1246,7 @@ class NeoPoolModbusClient:
             FILTRATION_CONF_REGISTER, new_value, apply=apply
         )
 
-    async def async_start_backwash(self, apply: bool = True) -> dict[str, Any] | None:
+    async def async_start_backwash(self, apply: bool = False) -> dict[str, Any] | None:
         """Start a backwash cycle on a unit with an automatic filter valve.
 
         The firmware drives a backwash through the FILTVALVE registers,
@@ -1258,9 +1259,10 @@ class NeoPoolModbusClient:
         Raises :class:`NeoPoolInvalidStateError` if no cleaning interval is
         configured (missing or 0), since there is no duration to run.
 
-        ``apply`` defaults to True to persist the write and restart the
-        affected modules; the FILTVALVE registers are User-page config,
-        so the write survives a restart. Pass False for a volatile change.
+        ``apply`` defaults to False: MBF_PAR_FILTVALVE_REMAINING is a runtime
+        countdown, so an EEPROM save + EXEC is unnecessary and only wears the
+        controller. A plain write starts the cycle immediately. Pass True to
+        force a persist + restart.
         """
         interval = self._cached_result.get("MBF_PAR_FILTVALVE_INTERVAL")
         if interval is None:
@@ -1275,6 +1277,22 @@ class NeoPoolModbusClient:
             )
         return await self.async_write_register(
             FILTVALVE_REMAINING_REGISTER, int(interval), apply=apply
+        )
+
+    async def async_stop_backwash(self, apply: bool = False) -> dict[str, Any] | None:
+        """Stop a running backwash cycle on a unit with an automatic filter valve.
+
+        Writing 0 to MBF_PAR_FILTVALVE_REMAINING (0x04EF) ends the cycle; the
+        valve returns to the filtration position and the remaining-time
+        countdown resets to 0. Safe to call when no backwash is active (it
+        simply keeps the register at 0).
+
+        ``apply`` defaults to False, matching :meth:`async_start_backwash`:
+        MBF_PAR_FILTVALVE_REMAINING is a runtime countdown, so no EEPROM save
+        + EXEC is needed to stop the cycle. Pass True for a persist + restart.
+        """
+        return await self.async_write_register(
+            FILTVALVE_REMAINING_REGISTER, 0, apply=apply
         )
 
     async def async_clear_errors(self) -> dict[str, Any] | None:
@@ -1591,8 +1609,14 @@ class NeoPoolModbusClient:
 
             # Verify the read-back matches the written value.
             # Skip verification for command registers (e.g. EEPROM save, EXEC)
-            # that auto-clear to 0 after being processed by the controller.
-            if address not in COMMAND_REGISTERS and confirm.registers != value:
+            # that auto-clear to 0 after being processed by the controller, and
+            # for countdown registers (e.g. FILTVALVE_REMAINING) that decrement
+            # once per second so the read-back is already lower than written.
+            if (
+                address not in COMMAND_REGISTERS
+                and address not in COUNTDOWN_REGISTERS
+                and confirm.registers != value
+            ):
                 wrote = value if len(value) > 1 else value[0]
                 read_back = (
                     confirm.registers if len(value) > 1 else confirm.registers[0]
