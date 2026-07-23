@@ -69,6 +69,8 @@ from .registers import (
     FILTRATION_MODE_REGISTER,
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
+    FILTVALVE_INTERVAL_REGISTER,
+    FILTVALVE_REMAINING_REGISTER,
     HEATING_SETPOINT_REGISTER,
     HIDRO_COVER_ENABLE_REGISTER,
     INTELLIGENT_SETPOINT_REGISTER,
@@ -1241,6 +1243,38 @@ class NeoPoolModbusClient:
         )
         return await self.async_write_register(
             FILTRATION_CONF_REGISTER, new_value, apply=apply
+        )
+
+    async def async_start_backwash(self, apply: bool = True) -> dict[str, Any] | None:
+        """Start a backwash cycle on a unit with an automatic filter valve.
+
+        The firmware drives a backwash through the FILTVALVE registers,
+        not the filtration mode: writing the cleaning-action duration into
+        MBF_PAR_FILTVALVE_REMAINING (0x04EF) starts the cycle and the
+        remaining time counts down once per second. The duration is the
+        configured MBF_PAR_FILTVALVE_INTERVAL (0x04EE), read from the last
+        :meth:`async_read_all` cache when available, else read fresh.
+
+        Raises :class:`NeoPoolInvalidStateError` if no cleaning interval is
+        configured (missing or 0), since there is no duration to run.
+
+        ``apply`` defaults to True to persist the write and restart the
+        affected modules; the FILTVALVE registers are User-page config,
+        so the write survives a restart. Pass False for a volatile change.
+        """
+        interval = self._cached_result.get("MBF_PAR_FILTVALVE_INTERVAL")
+        if interval is None:
+            regs = await self.async_read_register(FILTVALVE_INTERVAL_REGISTER)
+            interval = regs[0]
+            await asyncio.sleep(0.1)
+        if not interval:
+            raise NeoPoolInvalidStateError(
+                "No backwash cleaning interval configured "
+                "(MBF_PAR_FILTVALVE_INTERVAL is 0); cannot start a backwash",
+                reason=InvalidStateReason.FILTVALVE_INTERVAL_NOT_SET,
+            )
+        return await self.async_write_register(
+            FILTVALVE_REMAINING_REGISTER, int(interval), apply=apply
         )
 
     async def async_clear_errors(self) -> dict[str, Any] | None:

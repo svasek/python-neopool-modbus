@@ -2983,6 +2983,68 @@ async def test_async_set_filtration_speed_rejects_unknown(config):
     client.async_write_register.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_async_start_backwash_uses_cached_interval(config):
+    """Hot path: read the cleaning interval from the cache and write REMAINING."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {"MBF_PAR_FILTVALVE_INTERVAL": 150}
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    result = await client.async_start_backwash()
+
+    assert result == {"ok": True}
+    client.async_read_register.assert_not_awaited()
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_start_backwash_falls_back_to_modbus_read(config):
+    """Cold path: cache miss -> read the interval register, sleep, then write."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {}
+    client.async_read_register = AsyncMock(return_value=[150])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=fake_sleep):
+        await client.async_start_backwash(apply=False)
+
+    client.async_read_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_INTERVAL_REGISTER
+    )
+    assert sleeps == [0.1]
+    client.async_write_register.assert_awaited_once_with(
+        neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_start_backwash_raises_when_interval_unset(config):
+    """No configured interval (0) means there is no duration to run."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {"MBF_PAR_FILTVALVE_INTERVAL": 0}
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock()
+
+    with pytest.raises(
+        neopool_modbus.NeoPoolInvalidStateError, match="cleaning interval"
+    ) as excinfo:
+        await client.async_start_backwash()
+
+    assert (
+        excinfo.value.reason
+        is neopool_modbus.InvalidStateReason.FILTVALVE_INTERVAL_NOT_SET
+    )
+    client.async_write_register.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Command shortcuts (clear errors / save EEPROM / reset user counters)
 # ---------------------------------------------------------------------------
