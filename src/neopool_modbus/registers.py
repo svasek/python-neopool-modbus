@@ -120,6 +120,7 @@ class ConfigKind(IntEnum):
 
     - ``FILTVALVE_MODE``: filter-valve backwash mode selector.
     - ``FILTVALVE_PERIOD_MINUTES``: backwash repeat interval in minutes.
+    - ``FILTVALVE_INTERVAL``: backwash cleaning-action duration in seconds.
     - ``INTELLIGENT_FILT_MIN_TIME``: minimum filtration time for the
       intelligent filtration mode.
     - ``RELAY_ACTIVATION_DELAY``: relay activation delay in seconds.
@@ -134,6 +135,7 @@ class ConfigKind(IntEnum):
     FILTVALVE_PERIOD_MINUTES = 1
     INTELLIGENT_FILT_MIN_TIME = 2
     RELAY_ACTIVATION_DELAY = 3
+    FILTVALVE_INTERVAL = 4
 
 
 # Single-register write addresses with special semantics.
@@ -188,6 +190,8 @@ RELAY_ACTIVATION_DELAY_REGISTER = 0x0433  # MBF_PAR_RELAY_ACTIVATION_DELAY
 # Filter valve registers.
 FILTVALVE_MODE_REGISTER = 0x04E9  # MBF_PAR_FILTVALVE_MODE
 FILTVALVE_PERIOD_REGISTER = 0x04ED  # MBF_PAR_FILTVALVE_PERIOD_MINUTES
+FILTVALVE_INTERVAL_REGISTER = 0x04EE  # MBF_PAR_FILTVALVE_INTERVAL
+FILTVALVE_REMAINING_REGISTER = 0x04EF  # MBF_PAR_FILTVALVE_REMAINING
 
 # Relay function/timer-block addresses and function codes.
 # Each AUX relay has a timer-block start address, a function-select register,
@@ -437,6 +441,10 @@ _CONFIG_LAYOUT: Mapping[ConfigKind, tuple[int, str]] = {
         FILTVALVE_PERIOD_REGISTER,
         "MBF_PAR_FILTVALVE_PERIOD_MINUTES",
     ),
+    ConfigKind.FILTVALVE_INTERVAL: (
+        FILTVALVE_INTERVAL_REGISTER,
+        "MBF_PAR_FILTVALVE_INTERVAL",
+    ),
     ConfigKind.INTELLIGENT_FILT_MIN_TIME: (
         INTELLIGENT_FILT_MIN_TIME_REGISTER,
         "MBF_PAR_INTELLIGENT_FILT_MIN_TIME",
@@ -484,8 +492,10 @@ __all__ = [
     "FILTRATION_TIMER2_SPEED_SHIFT",
     "FILTRATION_TIMER3_SPEED_MASK",
     "FILTRATION_TIMER3_SPEED_SHIFT",
+    "FILTVALVE_INTERVAL_REGISTER",
     "FILTVALVE_MODE_REGISTER",
     "FILTVALVE_PERIOD_REGISTER",
+    "FILTVALVE_REMAINING_REGISTER",
     "GPIO_REGISTERS",
     "HEATING_SETPOINT_REGISTER",
     "HIDRO_COVER_ENABLE_BIT",
