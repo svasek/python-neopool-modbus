@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-This is a Home Assistant custom integration for NeoPool/VistaPool pool controllers connected via Modbus TCP. It lives under `custom_components/neopool/` and follows the standard HA integration pattern.
+This is an async Python Modbus TCP client library for Sugar Valley NeoPool based pool controllers. It is distributed on PyPI as `neopool-modbus` and imported as `neopool_modbus`. The library is the communication layer used by the Home Assistant `neopool` integration and is usable from any async Python project. The package lives under `src/neopool_modbus/` and is a typed package (`py.typed`).
 
 ## Development Commands
 
@@ -19,10 +19,10 @@ pip install -r requirements-dev.txt
 pytest
 
 # Run a single test file
-pytest tests/test_sensor.py
+pytest tests/test_client.py
 
 # Run tests with coverage
-pytest --cov=custom_components/vistapool --cov-report=term-missing tests/
+pytest --cov=neopool_modbus --cov-report=term-missing tests/
 
 # Type checking (must be 0 errors)
 basedpyright
@@ -39,28 +39,40 @@ ruff format
 
 ## Architecture
 
-### Data Flow
+### Public API
 
-```
-Config Flow → ConfigEntry → NeoPoolCoordinator → NeoPoolModbusClient
-                                    ↓
-                         Platform entities subscribe
-                         (sensor, switch, number, select, button, light, binary_sensor)
-```
+The package exports a small surface from `src/neopool_modbus/__init__.py`:
 
-- **`modbus.py`** (`NeoPoolModbusClient`): Low-level Modbus TCP communication via `pymodbus`. Reads/writes registers, decodes raw register values into structured dicts.
-- **`coordinator.py`** (`NeoPoolCoordinator`): `DataUpdateCoordinator` subclass. Polls `NeoPoolModbusClient` on `scan_interval`, distributes data to all platform entities. Also handles winter mode (suspends polling) and follow-up refresh after writes.
-- **`const.py`**: Central definition file (~1200 lines). All entity definitions (keys, register addresses, device classes, units, options) live here as data structures. Adding a new entity usually means only editing `const.py`.
-- **`entity.py`**: Base `NeoPoolEntity` — shared `unique_id`, `device_info`, `available` logic.
-- **Platform files** (`sensor.py`, `switch.py`, etc.): Thin wrappers that read from `coordinator.data` using keys defined in `const.py`.
+- `NeoPoolModbusClient` - the async client (connect, read/write registers, retry/backoff).
+- `async_probe_serial` - one-shot serial-number probe for connection validation.
+- Exception hierarchy: `NeoPoolError` and its subclasses `NeoPoolConnectionError`,
+  `NeoPoolModbusError`, `NeoPoolTimeoutError`, `NeoPoolInvalidStateError`.
+- `InvalidStateReason`, `__version__`.
+
+Consumers should import from the top-level package, not from submodules.
+
+### Modules
+
+- **`client.py`** (`NeoPoolModbusClient`): async Modbus TCP client via `pymodbus`. Connects,
+  reads/writes registers, applies retry/backoff, and verifies writes. Decodes raw registers into a
+  structured data snapshot dict.
+- **`decoders.py`**: pure decoders, encoders and computations for register values. No I/O.
+- **`registers.py`**: Modbus register addresses and protocol-level constants for NeoPool devices.
+- **`status_mask.py`**: status mask decoders (based on `xsns_83_neopool.ino`).
+- **`capabilities.py`**: capability predicates over a decoded data snapshot (hydrolysis, pH, Redox,
+  chlorine, etc.).
+- **`probe.py`**: lightweight one-shot probes that open a fresh connection, do a single read, and
+  tear it down (e.g. `async_probe_serial`).
+- **`exceptions.py`**: the public exception hierarchy.
 
 ### Key Patterns
 
-- Entity definitions in `const.py` are data-driven; platform files iterate over them to create entities. New entities rarely require changes outside `const.py`.
-- `coordinator.data` is a flat `dict[str, Any]` keyed by the entity keys defined in `const.py`.
-- Capability detection (hydrolysis, pH, Redox, chlorine, etc.) sets `CAPABILITY_KEYS` in coordinator data; entities check these to decide whether to register/show.
-- `modbus_compat.py` abstracts pymodbus API differences between versions.
-- `migration.py` handles config entry version upgrades (imported and re-exported from `__init__.py` for HA to discover).
+- Decoders in `decoders.py` and `status_mask.py` are pure functions (no I/O); all transport lives
+  in `client.py` and `probe.py`. Keep that separation when adding features.
+- The client returns a flat data snapshot dict; capability predicates in `capabilities.py` read
+  from it to decide what a consumer can use.
+- Probes raise the public `NeoPoolError` hierarchy so callers do not need to import `pymodbus` to
+  handle errors.
 
 ## Branch Naming
 
@@ -84,8 +96,15 @@ Examples: `feat/add-login-page`, `fix/header-bug`, `feature/issue-123-new-login`
 
 ### Approval
 
-- **Never commit automatically.** Always wait for my explicit approval before running `git commit`.
+- **Never commit or push automatically.** Always wait for my explicit approval before running `git commit` or `git push`.
+- **Approval is per action, not per session.** Approving one commit or push does not authorize the next one. Ask again each time.
+- **Never automatically merge pull requests.** This will be always done by me manually.
 - **Tests:** If the project has tests, run them before proposing a commit. Verify that all tests pass and that code coverage has not decreased.
+
+### Versioning & Merge Strategy
+
+- **Versioning is handled by release-please.** Never bump the version by hand; release-please opens the release PR.
+- **PRs are squash-merged.** Only the PR title reaches the changelog, so the title must be a clean, correct commit message. Per-commit messages inside a PR are internal history only.
 
 ### Commit Message Format
 
@@ -94,8 +113,11 @@ Always use the format: `<type>(<scope>): <gitmoji> <description>`
 **Rules:**
 
 - `scope` is optional but use it when the change is clearly scoped to a module
-  (e.g. `sensor`, `binary_sensor`, `button`, `light`, `number`, `select`, `switch`, `modbus`, `config`, `coordinator`, `entity`, `diagnostics`, `helpers`)
+  (e.g. `client`, `decoders`, `registers`, `status_mask`, `capabilities`, `probe`, `exceptions`)
 - `description`: lowercase, imperative mood ("add", not "added"), no period at end
+- Keep it terse. Commit subjects, bodies, and code comments should be concise and to the point; avoid verbose prose.
+- No em-dashes anywhere (commit messages, PR text, code, comments, docs). Use a regular hyphen, comma, or separate sentence instead.
+- No `@` or `#` characters in commit messages, PR text, or comments: GitHub auto-links them. The only exception is a `Resolves #<issue-number>` trailer at the end of a commit or PR body.
 
 **Pick the type and gitmoji that best reflect the nature of the change:**
 
@@ -135,12 +157,12 @@ Add a blank line after the subject line, then a bullet list covering:
 Keep bullets concise (one line each). If the commit resolves a GitHub issue, end the body with `Resolves #<issue-number>`.
 
 ```
-feat(modbus): ✨ add notification-based polling optimisation
+feat(client): ✨ add async event-notification polling
 
 - replace interval polling with Modbus event notifications
 - reduce unnecessary register reads when no state change occurred
 - add configurable debounce threshold for notification batching
-- improves responsiveness and reduces Modbus bus load
+- improve responsiveness and reduce Modbus bus load
 
 Resolves #97
 ```
@@ -148,11 +170,11 @@ Resolves #97
 **Examples from this project:**
 
 ```
-feat(button): ✨ add backwash button and logic for automatic filtration valve
-fix(coordinator): 🐛 mark entities unavailable on Modbus communication error
-fix: 🩹 update step value for redox setpoint
-refactor: ♻️ use data-driven option gating for cover sensor entities
-chore: 🏷️ update model and manufacturer details for VistaPool
+feat(client): ✨ add async_start_backwash via FILTVALVE registers
+feat(client): ✨ add async_stop_backwash and skip verify for countdown registers
+fix(client): 🐛 guard backwash against auto mode and align filtvalve API with relays
+refactor(decoders): ♻️ extract pure register decoding helpers
+chore: 🩹 drop unused noqa flagged by ruff 0.16
 chore(deps): ⬆️ bump codecov/codecov-action from 5 to 6
 ```
 
@@ -170,9 +192,9 @@ Multi-line commit messages in bash/zsh: use multiple `-m` flags (one per paragra
 
 ### Type Checking
 
-- This project uses **basedpyright** with `typeCheckingMode: basic` (see `pyrightconfig.json`).
+- This project uses **basedpyright** with `typeCheckingMode: strict` (see `pyrightconfig.json`).
 - Run `basedpyright` before committing and ensure **0 errors**.
-- CI enforces type checking via `.github/workflows/typecheck.yml`.
+- CI enforces type checking via `.github/workflows/typecheck.yaml`.
 
 ### Linting & Formatting
 
