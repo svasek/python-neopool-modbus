@@ -3015,6 +3015,32 @@ async def test_async_set_filtration_speed_rejects_unknown(config):
 
 
 @pytest.mark.asyncio
+async def test_async_set_filtration_speed_updates_cache_for_next_write(config):
+    """A second speed change reads the first from cache (no fresh read).
+
+    Without a cache write-back the second call would miss the cache and
+    fall back to a Modbus read of the pre-first-write word.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result = {"MBF_PAR_FILTRATION_CONF": 0x8001}
+    client.async_read_register = AsyncMock()
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_set_filtration_speed("high")
+    # 0x8001 with bits 4-6 replaced by 2 (high) -> 0x8021.
+    assert client._cached_result["MBF_PAR_FILTRATION_CONF"] == 0x8021
+
+    await client.async_set_filtration_speed("mid")
+    # Second call must use the cached 0x8021, not fall back to a read.
+    client.async_read_register.assert_not_awaited()
+    # 0x8021 with bits 4-6 replaced by 1 (mid) -> 0x8011.
+    client.async_write_register.assert_awaited_with(
+        neopool_modbus.FILTRATION_CONF_REGISTER, 0x8011, apply=False
+    )
+    assert client._cached_result["MBF_PAR_FILTRATION_CONF"] == 0x8011
+
+
+@pytest.mark.asyncio
 async def test_async_start_backwash_uses_cached_interval(config):
     """Hot path: read the cleaning interval from the cache and write REMAINING."""
     client = neopool_modbus.NeoPoolModbusClient(config)
@@ -3671,6 +3697,31 @@ async def test_async_set_masked_register_propagates_connection_error(config):
         )
 
 
+@pytest.mark.asyncio
+async def test_async_set_masked_register_updates_cache_for_next_write(config):
+    """A second masked write into the shared register preserves the first slot.
+
+    Both flags pack into MBF_PAR_HIDRO_COVER_REDUCTION. Without a cache
+    write-back the second RMW starts from the pre-first-write word and
+    drops the first slot.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    shutdown = neopool_modbus.MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE
+    register, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    client._cached_result[data_key] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_set_masked_register(reduction, 50)
+    assert client._cached_result[data_key] == 50
+
+    await client.async_set_masked_register(shutdown, 30)
+    # The second write must keep the reduction slot (50) in the low byte.
+    expected = (30 << 8) | 50
+    client.async_write_register.assert_awaited_with(register, expected, apply=True)
+    assert client._cached_result[data_key] == expected
+
+
 # ---------------------------------------------------------------------------
 # High-level config-option write method
 # ---------------------------------------------------------------------------
@@ -3883,3 +3934,34 @@ async def test_async_set_bitmask_flag_propagates_connection_error(config):
         await client.async_set_bitmask_flag(
             neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE, True
         )
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitmask_flag_updates_cache_for_next_write(config):
+    """A second write into the shared register sees the first (no dropped bit).
+
+    Regression: both flags live in MBF_PAR_HIDRO_COVER_ENABLE. Without a
+    cache write-back the second RMW starts from the pre-first-write word
+    and clears the first bit.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    cover = neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE
+    shutdown = neopool_modbus.BitmaskConfigFlag.HIDRO_TEMP_SHUTDOWN
+    cover_bit = neopool_modbus._BITMASK_FLAG_LAYOUT[cover]
+    shutdown_bit = neopool_modbus._BITMASK_FLAG_LAYOUT[shutdown]
+
+    await client.async_set_bitmask_flag(cover, True)
+    assert client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] == cover_bit
+
+    await client.async_set_bitmask_flag(shutdown, True)
+    # The second write must carry BOTH bits, not just the shutdown bit.
+    client.async_write_register.assert_awaited_with(
+        neopool_modbus.HIDRO_COVER_ENABLE_REGISTER,
+        cover_bit | shutdown_bit,
+        apply=True,
+    )
+    assert (
+        client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] == cover_bit | shutdown_bit
+    )

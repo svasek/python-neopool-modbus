@@ -1233,7 +1233,9 @@ class NeoPoolModbusClient:
         fresh and waits 100 ms before the write. ``apply`` defaults to
         False since speed selects can flip frequently and forcing an
         EEPROM save + EXEC after each change wears the controller; pass
-        True when the new value must survive a restart.
+        True when the new value must survive a restart. The new register
+        value is written back into the cache so a back-to-back speed
+        change (before the next poll) starts from the updated word.
         """
         encoded = encode_filtration_speed(speed)
         current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
@@ -1244,9 +1246,11 @@ class NeoPoolModbusClient:
         new_value = (current & ~FILTRATION_SPEED_MASK) | (
             encoded << FILTRATION_SPEED_SHIFT
         )
-        return await self.async_write_register(
+        result = await self.async_write_register(
             FILTRATION_CONF_REGISTER, new_value, apply=apply
         )
+        self._cached_result["MBF_PAR_FILTRATION_CONF"] = new_value
+        return result
 
     async def async_start_backwash(self, apply: bool = False) -> dict[str, Any] | None:
         """Start a backwash cycle on a unit with an automatic filter valve.
@@ -1418,7 +1422,10 @@ class NeoPoolModbusClient:
         (:attr:`_cached_result`) so the surrounding bits of the shared
         register are preserved. Missing cache entries are treated as
         ``0``. The write is applied with ``apply=True`` to persist the
-        change to EEPROM and restart the affected modules.
+        change to EEPROM and restart the affected modules. The new
+        register value is written back into the cache so a back-to-back
+        write into the same shared register (before the next poll) starts
+        from the updated word.
 
         Returns an optimistic-update dict of the coordinator-data key
         the caller can merge into its own cache without knowing the
@@ -1428,6 +1435,7 @@ class NeoPoolModbusClient:
         current = int(self._cached_result.get(data_key, 0) or 0)
         new_value = (current & ~mask) | ((value << shift) & mask)
         await self.async_write_register(register, new_value, apply=True)
+        self._cached_result[data_key] = new_value
         _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
         return {data_key: new_value}
 
@@ -1584,7 +1592,9 @@ class NeoPoolModbusClient:
         (:attr:`_cached_result`) so the surrounding bits are preserved;
         a missing cache entry is treated as ``0``. The write is applied
         with ``apply=True`` to persist the change to EEPROM and restart
-        the affected modules.
+        the affected modules. The new register value is written back into
+        the cache so a back-to-back write into the same shared register
+        (before the next poll) starts from the updated word.
 
         Returns an optimistic-update dict of the
         ``MBF_PAR_HIDRO_COVER_ENABLE`` coordinator-data key with the new
@@ -1596,6 +1606,7 @@ class NeoPoolModbusClient:
         await self.async_write_register(
             HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
         )
+        self._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = new_value
         _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
         return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
 
