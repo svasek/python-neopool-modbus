@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.3](https://github.com/svasek/python-neopool-modbus/compare/v4.5.2...v4.5.3) (2026-08-26)
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🐛 raise on rejected write instead of returning None ([#64](https://github.com/svasek/python-neopool-modbus/issues/64)) ([775d9e8](https://github.com/svasek/python-neopool-modbus/commit/775d9e8a1b5980e414247a681833f6f3674eea74))
+
 ## [4.5.2](https://github.com/svasek/python-neopool-modbus/compare/v4.5.1...v4.5.2) (2026-08-25)
 
 
