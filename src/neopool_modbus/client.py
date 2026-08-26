@@ -1642,11 +1642,12 @@ class NeoPoolModbusClient:
                 address=address, values=value, device_id=self._unit
             )
             if result.isError():
-                self._failed_writes[f"0x{address:04X}"] = (
-                    self._failed_writes.get(f"0x{address:04X}", 0) + 1
+                # Raise (not return None) so callers cannot merge an optimistic
+                # state after a rejected write; the NeoPoolError handler below
+                # bumps _failed_writes + closes the client uniformly.
+                raise NeoPoolModbusError(  # noqa: TRY301
+                    f"Write rejected at 0x{address:04X}: {result}"
                 )
-                _LOGGER.error("Write failed at 0x%04X: %s", address, result)
-                return None
             _LOGGER.debug(
                 "Wrote register(s) at 0x%04X: %s", address, [int(v) for v in value]
             )
@@ -1658,8 +1659,9 @@ class NeoPoolModbusClient:
                 address=address, count=len(value), device_id=self._unit
             )
             if confirm.isError():
-                _LOGGER.error("Read failed at 0x%04X: %s", address, confirm)
-                return None
+                raise NeoPoolModbusError(  # noqa: TRY301
+                    f"Write confirmation read failed at 0x{address:04X}: {confirm}"
+                )
 
             # Verify the read-back matches the written value.
             # Skip verification for command registers (e.g. EEPROM save, EXEC)
@@ -1692,10 +1694,9 @@ class NeoPoolModbusClient:
                 )
 
                 if result.isError():  # pragma: no cover
-                    _LOGGER.error(
-                        "EEPROM save failed (0x%04X): %s", EEPROM_SAVE_REGISTER, result
+                    raise NeoPoolModbusError(  # noqa: TRY301
+                        f"EEPROM save failed (0x{EEPROM_SAVE_REGISTER:04X}): {result}"
                     )
-                    return None
                 _LOGGER.debug("EEPROM save triggered (0x%04X)", EEPROM_SAVE_REGISTER)
 
                 await asyncio.sleep(0.1)
@@ -1703,8 +1704,9 @@ class NeoPoolModbusClient:
                     address=EXEC_REGISTER, values=[1], device_id=self._unit
                 )
                 if result.isError():  # pragma: no cover
-                    _LOGGER.error("EXEC failed (0x%04X): %s", EXEC_REGISTER, result)
-                    return None
+                    raise NeoPoolModbusError(  # noqa: TRY301
+                        f"EXEC failed (0x{EXEC_REGISTER:04X}): {result}"
+                    )
                 _LOGGER.debug("Config EXEC triggered (0x%04X)", EXEC_REGISTER)
                 await asyncio.sleep(0.1)
 
