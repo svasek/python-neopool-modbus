@@ -1004,7 +1004,15 @@ async def test_perform_write_countdown_register_no_mismatch_warning(
         )
     assert result is not None
     assert "Write verification mismatch" not in caplog.text
-    """Test _perform_write_register returns None if write_registers returns error."""
+
+
+@pytest.mark.asyncio
+async def test_perform_write_register_write_isError(config, monkeypatch):
+    """A write response with isError() raises NeoPoolModbusError.
+
+    The device rejected the write, so callers must not merge an optimistic
+    state; the failure surfaces as an exception rather than a None return.
+    """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
@@ -1018,13 +1026,18 @@ async def test_perform_write_countdown_register_no_mismatch_warning(
     fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp(0, False))
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
 
-    result = await client._perform_write_register(0x0100, 123)
-    assert result is None
+    with pytest.raises(NeoPoolModbusError):
+        await client._perform_write_register(0x0100, 123)
+    assert client._failed_writes.get("0x0100") == 1
 
 
 @pytest.mark.asyncio
 async def test_perform_write_register_confirm_isError(config, monkeypatch):
-    """Test _perform_write_register returns None if confirm read returns error."""
+    """A confirmation read with isError() raises NeoPoolModbusError.
+
+    The write itself succeeded but the read-back failed, so the write is
+    unconfirmed and must surface as an exception, not a None return.
+    """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
@@ -1038,8 +1051,9 @@ async def test_perform_write_register_confirm_isError(config, monkeypatch):
     fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp(0, True))
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
 
-    result = await client._perform_write_register(0x0100, 123)
-    assert result is None
+    with pytest.raises(NeoPoolModbusError):
+        await client._perform_write_register(0x0100, 123)
+    assert client._failed_writes.get("0x0100") == 1
 
 
 @pytest.mark.asyncio
@@ -3804,6 +3818,35 @@ async def test_async_set_binary_flag_propagates_connection_error(config):
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
     with pytest.raises(NeoPoolConnectionError, match="boom"):
+        await client.async_set_binary_flag(
+            neopool_modbus.BinaryConfigFlag.UV_MODE, True
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_set_binary_flag_rejects_protocol_error(config, monkeypatch):
+    """A protocol-error write response propagates instead of an optimistic dict.
+
+    Guards the high-level contract end to end: when the device rejects the
+    write (isError() on the response), _perform_write_register raises, so the
+    setter must surface NeoPoolModbusError rather than returning its
+    optimistic {data_key: value} dict, which would let a caller merge a state
+    the device never accepted.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, is_error):
+            self.isError = lambda: is_error
+            self.registers = [0]
+
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp(True))
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp(False))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    with pytest.raises(NeoPoolModbusError):
         await client.async_set_binary_flag(
             neopool_modbus.BinaryConfigFlag.UV_MODE, True
         )
