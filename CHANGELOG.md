@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0](https://github.com/svasek/python-neopool-modbus/compare/v4.5.3...v4.6.0) (2026-08-27)
+
+
+### ✨ Features
+
+* **decoders:** ✨ add public decode_masked_flag helper ([#66](https://github.com/svasek/python-neopool-modbus/issues/66)) ([b039b0a](https://github.com/svasek/python-neopool-modbus/commit/b039b0abe2e8a7ffeaad49bad8e1176650c49c3c))
+
 ## [4.5.3](https://github.com/svasek/python-neopool-modbus/compare/v4.5.2...v4.5.3) (2026-08-26)
 
 

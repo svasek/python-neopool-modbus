@@ -40,7 +40,7 @@ from .exceptions import (
 )
 from .probe import async_probe_serial
 
-__version__ = "4.5.3"
+__version__ = "4.6.0"
 
 __all__ = [
     "InvalidStateReason",
