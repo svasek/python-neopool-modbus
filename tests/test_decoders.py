@@ -40,6 +40,7 @@ from neopool_modbus.decoders import (
     decode_filtvalve_mode,
     decode_hidro_polarity,
     decode_ion_polarity,
+    decode_masked_flag,
     decode_par_model_modules,
     decode_ph_alarm,
     decode_ph_pump_status,
@@ -65,7 +66,7 @@ from neopool_modbus.decoders import (
     ph_pump_options,
     seconds_to_hhmm,
 )
-from neopool_modbus.registers import TimerRelayMode
+from neopool_modbus.registers import MaskedFlag, TimerRelayMode
 
 
 def test_parse_version():
@@ -1374,3 +1375,16 @@ def test_device_time_round_trip(tz: object) -> None:
     assert decoded is not None
     # Both are UTC-aware datetimes for the same instant.
     assert decoded == original.astimezone(UTC)
+
+
+def test_decode_masked_flag_isolates_each_field():
+    """Packed 0x0C19 yields cover reduction 25 and shutdown temp 12."""
+    # Low byte 0x19 = 25 (cover reduction %), high byte 0x0C = 12 (shutdown temp).
+    data = {"MBF_PAR_HIDRO_COVER_REDUCTION": 0x0C19}
+    assert decode_masked_flag(MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT, data) == 25
+    assert decode_masked_flag(MaskedFlag.HIDRO_SHUTDOWN_TEMPERATURE, data) == 12
+
+
+def test_decode_masked_flag_returns_none_when_register_absent():
+    """A missing shared register decodes to None rather than raising."""
+    assert decode_masked_flag(MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT, {}) is None

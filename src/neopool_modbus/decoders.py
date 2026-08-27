@@ -23,6 +23,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
+from .registers import (
+    _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    MaskedFlag,
+)
+
 
 def parse_version(val: int | str | None) -> str:
     """Parse version from integer or string."""
@@ -579,6 +584,20 @@ def is_hydrolysis_in_percent(data: dict[str, Any]) -> bool:
     return True
 
 
+def decode_masked_flag(flag: MaskedFlag, data: dict[str, Any]) -> int | None:
+    """Decode a value packed into a shared register from a coordinator-data snapshot.
+
+    Isolates the flag's field via the library's mask/shift layout so callers
+    do not maintain protocol masks themselves. Returns None when the register
+    is absent.
+    """
+    _register, mask, shift, data_key = _MASKED_FLAG_LAYOUT[flag]
+    raw = data.get(data_key)
+    if raw is None:
+        return None
+    return (int(raw) & mask) >> shift
+
+
 def decode_hidro_polarity(data: dict[str, Any]) -> str | None:
     """Decode hydrolysis cell polarity state from coordinator data snapshot."""
     pol1 = data.get("HIDRO in Pol1")
@@ -728,6 +747,7 @@ __all__ = [
     "decode_filtvalve_mode",
     "decode_hidro_polarity",
     "decode_ion_polarity",
+    "decode_masked_flag",
     "decode_par_model_modules",
     "decode_ph_alarm",
     "decode_ph_pump_status",
