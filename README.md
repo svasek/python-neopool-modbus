@@ -227,6 +227,7 @@ from neopool_modbus.decoders import (
     decode_filtvalve_mode,
     decode_hidro_polarity,
     decode_ion_polarity,
+    decode_masked_flag,
     decode_par_model_modules,
     decode_ph_alarm,
     decode_ph_pump_status,
@@ -349,6 +350,12 @@ the value lands. The defaults match the operation's typical use: the
 filtration mode, cell boost and temperature setpoint persist by
 default; the filtration speed select stays volatile so frequent UI
 adjustments do not wear the controller's EEPROM.
+
+`decode_masked_flag(flag, data)` is the read counterpart to
+`async_set_masked_register`: it isolates a `MaskedFlag`'s field from a
+`async_read_all()` snapshot via the library's mask/shift layout, so
+callers do not maintain protocol masks themselves. It returns `None`
+when the shared register is absent.
 
 #### Enum-driven writes and optimistic updates
 
