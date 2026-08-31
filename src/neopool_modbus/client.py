@@ -190,6 +190,12 @@ class NeoPoolModbusClient:
             self._framer = FramerType.SOCKET
         self._client: AsyncModbusTcpClient | None = None  # ← Persistent client instance
         self._client_lock = asyncio.Lock()
+        # Serializes read-modify-write sequences on _cached_result against the
+        # poll's cache update, so a poll cannot restore a stale packed word
+        # between a sibling RMW's cache read and its write-back. Distinct from
+        # _client_lock (connection management) to avoid reentrant deadlock: the
+        # RMW write path re-enters _client_lock via get_client().
+        self._cache_lock = asyncio.Lock()
 
         # Connection retry parameters
         self._connection_attempts = 0
@@ -1179,8 +1185,11 @@ class NeoPoolModbusClient:
         )
 
         # Update cache after fixup and derived fields so partial reads
-        # start from consistent values including derived flags.
-        self._cached_result.update(result)
+        # start from consistent values including derived flags. Hold
+        # _cache_lock only around the write so a concurrent RMW cannot observe
+        # a torn cache; the slow I/O above stays outside the lock.
+        async with self._cache_lock:
+            self._cached_result.update(result)
 
         # _LOGGER.debug("All Results: %s", result)
         return result
@@ -1236,20 +1245,27 @@ class NeoPoolModbusClient:
         True when the new value must survive a restart. The new register
         value is written back into the cache so a back-to-back speed
         change (before the next poll) starts from the updated word.
+
+        The read-compute-write-back is serialized against concurrent polls
+        and other RMW writes, so a poll cannot restore a stale packed word
+        between the cache read and the write-back.
         """
         encoded = encode_filtration_speed(speed)
-        current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
-        if current is None:
-            regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
-            current = regs[0]
-            await asyncio.sleep(0.1)
-        new_value = (current & ~FILTRATION_SPEED_MASK) | (
-            encoded << FILTRATION_SPEED_SHIFT
-        )
-        result = await self.async_write_register(
-            FILTRATION_CONF_REGISTER, new_value, apply=apply
-        )
-        self._cached_result["MBF_PAR_FILTRATION_CONF"] = new_value
+        # Serialize the read-compute-write-back against the poll so a read_all
+        # cannot restore a stale packed word between our cache read and write.
+        async with self._cache_lock:
+            current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
+            if current is None:
+                regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
+                current = regs[0]
+                await asyncio.sleep(0.1)
+            new_value = (current & ~FILTRATION_SPEED_MASK) | (
+                encoded << FILTRATION_SPEED_SHIFT
+            )
+            result = await self.async_write_register(
+                FILTRATION_CONF_REGISTER, new_value, apply=apply
+            )
+            self._cached_result["MBF_PAR_FILTRATION_CONF"] = new_value
         return result
 
     async def async_start_backwash(self, apply: bool = False) -> dict[str, Any] | None:
@@ -1427,15 +1443,22 @@ class NeoPoolModbusClient:
         write into the same shared register (before the next poll) starts
         from the updated word.
 
+        The read-compute-write-back is serialized against concurrent polls
+        and other RMW writes, so a poll cannot restore a stale packed word
+        between the cache read and the write-back.
+
         Returns an optimistic-update dict of the coordinator-data key
         the caller can merge into its own cache without knowing the
         register layout.
         """
         register, mask, shift, data_key = _MASKED_FLAG_LAYOUT[flag]
-        current = int(self._cached_result.get(data_key, 0) or 0)
-        new_value = (current & ~mask) | ((value << shift) & mask)
-        await self.async_write_register(register, new_value, apply=True)
-        self._cached_result[data_key] = new_value
+        # Serialize the read-compute-write-back against the poll so a read_all
+        # cannot restore a stale packed word between our cache read and write.
+        async with self._cache_lock:
+            current = int(self._cached_result.get(data_key, 0) or 0)
+            new_value = (current & ~mask) | ((value << shift) & mask)
+            await self.async_write_register(register, new_value, apply=True)
+            self._cached_result[data_key] = new_value
         _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
         return {data_key: new_value}
 
@@ -1596,17 +1619,24 @@ class NeoPoolModbusClient:
         the cache so a back-to-back write into the same shared register
         (before the next poll) starts from the updated word.
 
+        The read-compute-write-back is serialized against concurrent polls
+        and other RMW writes, so a poll cannot restore a stale packed word
+        between the cache read and the write-back.
+
         Returns an optimistic-update dict of the
         ``MBF_PAR_HIDRO_COVER_ENABLE`` coordinator-data key with the new
         register value so the caller can merge it into its own cache.
         """
         bit = _BITMASK_FLAG_LAYOUT[flag]
-        current = int(self._cached_result.get("MBF_PAR_HIDRO_COVER_ENABLE", 0) or 0)
-        new_value = current | bit if on else current & ~bit
-        await self.async_write_register(
-            HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
-        )
-        self._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = new_value
+        # Serialize the read-compute-write-back against the poll so a read_all
+        # cannot restore a stale packed word between our cache read and write.
+        async with self._cache_lock:
+            current = int(self._cached_result.get("MBF_PAR_HIDRO_COVER_ENABLE", 0) or 0)
+            new_value = current | bit if on else current & ~bit
+            await self.async_write_register(
+                HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
+            )
+            self._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = new_value
         _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
         return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
 
