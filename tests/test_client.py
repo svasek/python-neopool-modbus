@@ -3736,6 +3736,65 @@ async def test_async_set_masked_register_updates_cache_for_next_write(config):
     assert client._cached_result[data_key] == expected
 
 
+@pytest.mark.asyncio
+async def test_async_set_masked_register_serializes_against_poll(config):
+    """The RMW and the poll's cache update never overlap.
+
+    The RMW holds _cache_lock across its cache read and write-back, and the
+    poll acquires the same lock around its cache update. A poll firing while
+    the write is in flight must therefore block until the RMW writes back and
+    releases the lock; it can never observe or interleave with a torn cache.
+    Without the shared lock the poll's stale word would land between the RMW's
+    read and write-back and undo the field.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    _, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    client._cached_result[data_key] = 0
+
+    active = 0
+    max_active = 0
+    write_started = asyncio.Event()
+    release_write = asyncio.Event()
+    poll_done = asyncio.Event()
+
+    async def _slow_write(*_args, **_kwargs):
+        nonlocal active, max_active
+        # The RMW holds _cache_lock here (between its read and write-back).
+        active += 1
+        max_active = max(max_active, active)
+        write_started.set()
+        await release_write.wait()
+        active -= 1
+        return {"ok": True}
+
+    client.async_write_register = AsyncMock(side_effect=_slow_write)
+
+    async def _racing_poll():
+        nonlocal active, max_active
+        await write_started.wait()
+        # Mirror the poll's cache update: same lock, so this must wait until
+        # the RMW releases it, never running concurrently with the write-back.
+        async with client._cache_lock:
+            active += 1
+            max_active = max(max_active, active)
+            active -= 1
+        poll_done.set()
+
+    rmw = asyncio.create_task(client.async_set_masked_register(reduction, 50))
+    poll = asyncio.create_task(_racing_poll())
+
+    await write_started.wait()
+    release_write.set()
+    await asyncio.gather(rmw, poll)
+    await poll_done.wait()
+
+    # Mutual exclusion held: the poll never entered the critical section while
+    # the RMW was inside it, and the write-back survives.
+    assert max_active == 1
+    assert client._cached_result[data_key] == 50
+
+
 # ---------------------------------------------------------------------------
 # High-level config-option write method
 # ---------------------------------------------------------------------------
