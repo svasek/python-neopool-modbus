@@ -155,6 +155,17 @@ _U32_REGISTER_PAIRS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# Derived keys computed from an RMW-guarded raw word. When a poll's stale
+# snapshot is skipped for the raw word, its derived keys must be recomputed from
+# the authoritative post-merge cache rather than merged from the snapshot,
+# otherwise the poll's transient derived view could regress a completed RMW.
+_RMW_DERIVED_KEYS: dict[str, dict[str, Callable[[dict[str, Any]], Any]]] = {
+    "MBF_PAR_FILTRATION_CONF": {
+        "filtration_speed_state": compute_filtration_speed_state,
+    },
+}
+
+
 def _collapse_u32_register_pairs(result: dict[str, Any]) -> None:
     """Replace each known LOW/HIGH register pair with a single combined entry."""
     for combined, low_key, high_key in _U32_REGISTER_PAIRS:
@@ -196,6 +207,13 @@ class NeoPoolModbusClient:
         # _client_lock (connection management) to avoid reentrant deadlock: the
         # RMW write path re-enters _client_lock via get_client().
         self._cache_lock = asyncio.Lock()
+        # RMW freshness guard: the poll builds its device snapshot outside the
+        # lock, so a completed RMW could still be overwritten by an in-flight
+        # poll that read the old word before the RMW ran. Each RMW bumps a
+        # monotonic generation and stamps the key it committed; the poll skips
+        # any key committed after the generation it captured at its start.
+        self._rmw_generation: int = 0
+        self._rmw_key_generation: dict[str, int] = {}
 
         # Connection retry parameters
         self._connection_attempts = 0
@@ -492,12 +510,20 @@ class NeoPoolModbusClient:
             self._connection_attempts = 0
             self._consecutive_errors = 0
             self._backoff_until = None
-            # Reset notification polling state so the next connect starts with a full read
-            self._cached_result = {}
             self._polls_since_full_read = _FULL_READ_INTERVAL
             self._last_notification = 0
             self._last_was_full_read = True
             self._cached_timers = {}
+        # Reset the cache and per-key RMW stamps under _cache_lock so the reset
+        # is ordered against an in-flight poll's _merge_poll_result rather than
+        # racing it. Keep _rmw_generation MONOTONIC across the close (bump, never
+        # reset): a poll that captured a high generation before the close must
+        # still compare as older than any post-reconnect RMW, so a stale snapshot
+        # cannot overwrite a fresh write after a reconnect.
+        async with self._cache_lock:
+            self._cached_result = {}
+            self._rmw_key_generation = {}
+            self._rmw_generation += 1
 
     async def async_read_register(
         self,
@@ -665,6 +691,12 @@ class NeoPoolModbusClient:
 
     async def _perform_read_all(self) -> dict[str, Any]:
         result: dict[str, Any] = {}
+        # Capture the RMW generation before any device I/O. Any key an RMW
+        # commits after this point must not be clobbered by our stale snapshot.
+        # Read outside the lock: a slightly older value only makes the poll more
+        # conservative (skip a key it could have merged), never the reverse; the
+        # authoritative comparison happens under _cache_lock at write time.
+        poll_generation = self._rmw_generation
 
         @overload
         def get_safe(regs: list[int], idx: int) -> int | None: ...
@@ -1187,12 +1219,43 @@ class NeoPoolModbusClient:
         # Update cache after fixup and derived fields so partial reads
         # start from consistent values including derived flags. Hold
         # _cache_lock only around the write so a concurrent RMW cannot observe
-        # a torn cache; the slow I/O above stays outside the lock.
-        async with self._cache_lock:
-            self._cached_result.update(result)
+        # a torn cache; the slow I/O above stays outside the lock. Skip any key
+        # an RMW committed after our snapshot so a stale word cannot undo it.
+        await self._merge_poll_result(result, poll_generation)
 
         # _LOGGER.debug("All Results: %s", result)
         return result
+
+    async def _merge_poll_result(
+        self, result: dict[str, Any], poll_generation: int
+    ) -> None:
+        """Merge a poll's device snapshot into the cache under _cache_lock.
+
+        Skips any key an RMW committed after *poll_generation* (the generation
+        captured before this poll's device I/O began), so a stale in-flight
+        snapshot cannot undo a completed RMW write.
+
+        Derived keys computed from a guarded raw word (e.g.
+        ``filtration_speed_state`` from ``MBF_PAR_FILTRATION_CONF``) are the
+        poll's own transient view of the stale word, so when a guarded raw key
+        is skipped its derived keys are recomputed from the authoritative
+        post-merge cache rather than merged from the snapshot.
+        """
+        async with self._cache_lock:
+            skipped: set[str] = set()
+            for key, value in result.items():
+                if self._rmw_key_generation.get(key, 0) > poll_generation:
+                    skipped.add(key)
+                    continue
+                self._cached_result[key] = value
+            # Recompute derived keys whose guarded source was skipped, so the
+            # poll's stale derived view cannot regress a completed RMW.
+            for source, derived in _RMW_DERIVED_KEYS.items():
+                if source in skipped:
+                    for derived_key, recompute in derived.items():
+                        self._cached_result[derived_key] = recompute(
+                            self._cached_result
+                        )
 
     async def async_write_register(
         self, address: int, value: int | list[int], apply: bool = False
@@ -1247,8 +1310,9 @@ class NeoPoolModbusClient:
         change (before the next poll) starts from the updated word.
 
         The read-compute-write-back is serialized against concurrent polls
-        and other RMW writes, so a poll cannot restore a stale packed word
-        between the cache read and the write-back.
+        and other RMW writes, and stamps the committed key with a monotonic
+        generation so a poll that snapshotted the old word before this write
+        cannot restore it afterwards.
         """
         encoded = encode_filtration_speed(speed)
         # Serialize the read-compute-write-back against the poll so a read_all
@@ -1266,6 +1330,8 @@ class NeoPoolModbusClient:
                 FILTRATION_CONF_REGISTER, new_value, apply=apply
             )
             self._cached_result["MBF_PAR_FILTRATION_CONF"] = new_value
+            self._rmw_generation += 1
+            self._rmw_key_generation["MBF_PAR_FILTRATION_CONF"] = self._rmw_generation
         return result
 
     async def async_start_backwash(self, apply: bool = False) -> dict[str, Any] | None:
@@ -1444,8 +1510,9 @@ class NeoPoolModbusClient:
         from the updated word.
 
         The read-compute-write-back is serialized against concurrent polls
-        and other RMW writes, so a poll cannot restore a stale packed word
-        between the cache read and the write-back.
+        and other RMW writes, and stamps the committed key with a monotonic
+        generation so a poll that snapshotted the old word before this write
+        cannot restore it afterwards.
 
         Returns an optimistic-update dict of the coordinator-data key
         the caller can merge into its own cache without knowing the
@@ -1459,6 +1526,8 @@ class NeoPoolModbusClient:
             new_value = (current & ~mask) | ((value << shift) & mask)
             await self.async_write_register(register, new_value, apply=True)
             self._cached_result[data_key] = new_value
+            self._rmw_generation += 1
+            self._rmw_key_generation[data_key] = self._rmw_generation
         _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
         return {data_key: new_value}
 
@@ -1620,8 +1689,9 @@ class NeoPoolModbusClient:
         (before the next poll) starts from the updated word.
 
         The read-compute-write-back is serialized against concurrent polls
-        and other RMW writes, so a poll cannot restore a stale packed word
-        between the cache read and the write-back.
+        and other RMW writes, and stamps the committed key with a monotonic
+        generation so a poll that snapshotted the old word before this write
+        cannot restore it afterwards.
 
         Returns an optimistic-update dict of the
         ``MBF_PAR_HIDRO_COVER_ENABLE`` coordinator-data key with the new
@@ -1637,6 +1707,10 @@ class NeoPoolModbusClient:
                 HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
             )
             self._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = new_value
+            self._rmw_generation += 1
+            self._rmw_key_generation["MBF_PAR_HIDRO_COVER_ENABLE"] = (
+                self._rmw_generation
+            )
         _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
         return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
 

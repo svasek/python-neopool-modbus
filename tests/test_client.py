@@ -57,6 +57,10 @@ async def test_close_resets_state_and_closes_client(config):
     client._connection_attempts = 42
     client._consecutive_errors = 7
     client._backoff_until = datetime.now(tz=UTC)
+    # Seed RMW guard state so the close reset is pinned by assertions.
+    client._cached_result = {"MBF_PAR_TEMPERATURE": 210}
+    client._rmw_generation = 5
+    client._rmw_key_generation = {"MBF_PAR_HIDRO_COVER_ENABLE": 5}
 
     await client.close()
 
@@ -65,6 +69,12 @@ async def test_close_resets_state_and_closes_client(config):
     assert client._consecutive_errors == 0
     assert client._backoff_until is None
     assert client._client is None
+    # Cache and per-key stamps are cleared; the generation stays monotonic
+    # (bumped, never reset to 0) so a pre-close poll cannot outrank a
+    # post-reconnect RMW.
+    assert client._cached_result == {}
+    assert client._rmw_key_generation == {}
+    assert client._rmw_generation > 5
 
 
 def test_framer_defaults_to_socket(config):
@@ -3793,6 +3803,297 @@ async def test_async_set_masked_register_serializes_against_poll(config):
     # the RMW was inside it, and the write-back survives.
     assert max_active == 1
     assert client._cached_result[data_key] == 50
+
+
+@pytest.mark.asyncio
+async def test_poll_does_not_overwrite_completed_rmw(config):
+    """A poll's stale snapshot cannot undo a completed RMW write.
+
+    Reproduces the real overwrite path Copilot flagged: the poll captures its
+    RMW generation and builds a device snapshot holding the OLD word before an
+    RMW runs, the RMW then commits the new word (bumping the generation), and
+    the poll merges its stale snapshot afterwards. The merge goes through the
+    production ``_merge_poll_result`` used by ``_perform_read_all``, so the
+    guard is exercised on the actual code path, not a mirror.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    _, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    client._cached_result[data_key] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    # Poll captures its generation and the old word before the RMW runs.
+    poll_generation = client._rmw_generation
+    stale_snapshot = {data_key: 0, "MBF_PAR_TEMPERATURE": 210}
+
+    # RMW commits the new field to the cache and bumps the generation.
+    await client.async_set_masked_register(reduction, 50)
+    assert client._cached_result[data_key] == 50
+
+    # Poll now merges its stale snapshot; the RMW-touched key must be skipped
+    # while an untouched key still merges (guard is selective, not a blanket).
+    await client._merge_poll_result(stale_snapshot, poll_generation)
+
+    assert client._cached_result[data_key] == 50
+    assert client._cached_result["MBF_PAR_TEMPERATURE"] == 210
+
+
+@pytest.mark.asyncio
+async def test_perform_read_all_captures_generation_before_io(config, monkeypatch):
+    """_perform_read_all captures poll_generation BEFORE device I/O, end to end.
+
+    Drives the real _perform_read_all through the same mocked register scaffold
+    as the happy-path test, but interleaves an RMW inside the input-register
+    read (i.e. after the poll has begun but before it merges). Because the poll
+    captured its generation at the top of _perform_read_all, the guarded merge
+    must skip the RMW-touched key so the committed value survives. This pins the
+    capture-before-I/O wiring the guard depends on, not just the merge
+    arithmetic, and uses the production _merge_poll_result unmocked.
+    """
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    _, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    client._cached_result[data_key] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=[
+            DummyResp(
+                [
+                    1,
+                    3,
+                    1280,
+                    32768,
+                    88,
+                    47,
+                    16707,
+                    20497,
+                    8248,
+                    12592,
+                    0,
+                    0,
+                    0,
+                    22069,
+                    0,
+                    0,
+                ]
+            ),  # rr00
+            DummyResp(
+                [
+                    23971,
+                    8,
+                    23971,
+                    8,
+                    26922,
+                    0,
+                    34208,
+                    0,
+                    0,
+                    65426,
+                    0,
+                    0,
+                    0,
+                    0,
+                    64136,
+                    3,
+                    25371,
+                    4,
+                    16,
+                    0,
+                ]
+            ),  # rr02
+            DummyResp([266, 10000]),  # rr02_hidro
+            DummyResp(list(range(1, 14))),  # 0x0300
+            DummyResp(list(range(14, 18))),  # 0x0322
+            DummyResp(list(range(1, 32))),  # 0x0408
+            DummyResp([32, 33, 3, *list(range(35, 45))]),  # 0x0427
+            DummyResp([0] * 8),  # 0x04E8
+            DummyResp([650, 0, 750, 700, 0, 0, 700, 0, 100, 0, 0, 0, 5000, 0]),  # rr05
+            DummyResp([9, 6, 25604, 5, 0, 2240, 545, 1281, 0, 0, 0, 0, 0]),  # rr06
+        ]
+    )
+
+    async def _input_read_then_rmw(*args, **kwargs):
+        # The single input-register read runs mid-poll: fire the RMW here so the
+        # poll's captured generation predates the RMW's stamp.
+        await client.async_set_masked_register(reduction, 50)
+        return DummyResp(
+            [
+                0,
+                0,
+                820,
+                709,
+                0,
+                0,
+                140,
+                50560,
+                49536,
+                1280,
+                1280,
+                0,
+                8192,
+                16928,
+                0,
+                0,
+                9,
+                52,
+            ]
+        )
+
+    fake_modbus.read_input_registers = AsyncMock(side_effect=_input_read_then_rmw)
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    await client._perform_read_all()
+
+    # The poll captured its generation before the RMW stamped the key, so the
+    # guarded merge skipped the stale word and the committed value survived even
+    # though the poll's own snapshot decoded the old (0) word for it.
+    assert client._cached_result[data_key] == 50
+
+
+@pytest.mark.asyncio
+async def test_merge_poll_result_merges_rmw_key_once_poll_catches_up(config):
+    """A later poll (generation >= the RMW stamp) DOES merge the device value.
+
+    Guards against a permanent-pin regression: the guard must skip only stale
+    snapshots, never wedge an RMW-touched key so device data can no longer
+    refresh it. Once a poll's captured generation catches up to the RMW stamp,
+    the fresh device value wins.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    _, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    client._cached_result[data_key] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    await client.async_set_masked_register(reduction, 50)
+    rmw_generation = client._rmw_generation  # the key is stamped at this value
+
+    # A poll that started AFTER the RMW captured this generation; its device
+    # snapshot (75) is fresh and must win.
+    await client._merge_poll_result({data_key: 75}, rmw_generation)
+
+    assert client._cached_result[data_key] == 75
+
+
+@pytest.mark.asyncio
+async def test_merge_poll_result_multi_key_distinct_generations(config):
+    """Two RMWs on different keys stamp distinct increasing generations.
+
+    A poll whose generation was captured between the two commits must merge the
+    earlier-stamped key's stale word (stamp <= poll_generation) while skipping
+    the later-stamped key (stamp > poll_generation). This is the multi-key
+    correctness the single shared monotonic counter provides.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    _, _, _, key_a = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    key_b = "MBF_PAR_HIDRO_COVER_ENABLE"
+    client._cached_result[key_a] = 0
+    client._cached_result[key_b] = 0
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    # RMW-A stamps key_a.
+    await client.async_set_masked_register(reduction, 50)
+    poll_generation = client._rmw_generation  # captured between the two commits
+    # RMW-B stamps key_b with a strictly higher generation.
+    await client.async_set_bitmask_flag(
+        neopool_modbus.BitmaskConfigFlag.HIDRO_COVER_ENABLE, True
+    )
+
+    assert client._rmw_key_generation[key_b] > client._rmw_key_generation[key_a]
+
+    # Poll merges a stale snapshot of both keys.
+    b_word = client._cached_result[key_b]
+    await client._merge_poll_result({key_a: 0, key_b: 0}, poll_generation)
+
+    # key_a was committed at or before the poll snapshot -> stale word merges.
+    # key_b was committed after -> skipped, RMW value preserved.
+    assert client._cached_result[key_a] == 0
+    assert client._cached_result[key_b] == b_word
+
+
+@pytest.mark.asyncio
+async def test_merge_poll_recomputes_derived_key_when_source_skipped(config):
+    """A derived key is recomputed from the post-merge cache, not the snapshot.
+
+    filtration_speed_state hangs off the RMW-guarded MBF_PAR_FILTRATION_CONF.
+    When a stale poll's raw CONF word is skipped, its snapshot's derived
+    filtration_speed_state (still reflecting the old speed) must NOT merge; the
+    derived value is recomputed from the authoritative cached CONF so it tracks
+    the completed RMW rather than regressing for a cycle.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    # RMW sets speed to high (conf nibble 2 -> "high").
+    client._cached_result["MBF_PAR_FILTRATION_CONF"] = 0x0000
+    client._cached_result["Filtration Pump"] = True
+    client._cached_result["MBF_RELAY_STATE"] = 0  # no relay speed bits -> use conf
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    poll_generation = client._rmw_generation
+    # Stale poll snapshot: old speed (conf nibble 0 -> "low") plus the derived
+    # key the poll computed from that stale word.
+    stale_snapshot = {
+        "MBF_PAR_FILTRATION_CONF": 0x0000,
+        "Filtration Pump": True,
+        "MBF_RELAY_STATE": 0,
+        "filtration_speed_state": "low",
+    }
+
+    await client.async_set_filtration_speed("high")  # conf nibble 2 -> "high"
+    assert client._cached_result["MBF_PAR_FILTRATION_CONF"] & 0x0070 == 0x0020
+
+    await client._merge_poll_result(stale_snapshot, poll_generation)
+
+    # The raw word was skipped (RMW value kept) and the derived key was
+    # recomputed from it, not merged from the stale "low" snapshot.
+    assert client._cached_result["MBF_PAR_FILTRATION_CONF"] & 0x0070 == 0x0020
+    assert client._cached_result["filtration_speed_state"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_stale_poll_cannot_overwrite_rmw_across_close(config):
+    """A pre-close poll snapshot cannot undo a post-reconnect RMW.
+
+    close() keeps _rmw_generation monotonic (bump, not reset), so a poll that
+    captured a high generation before the close still compares as older than any
+    RMW committed after the reconnect.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    reduction = neopool_modbus.MaskedFlag.HIDRO_COVER_REDUCTION_PERCENT
+    _, _, _, data_key = neopool_modbus._MASKED_FLAG_LAYOUT[reduction]
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    # Steady state: some RMWs have run; a poll captures a high generation and an
+    # old snapshot for the key.
+    client._cached_result[data_key] = 0
+    for _ in range(5):
+        await client.async_set_masked_register(reduction, 10)
+    poll_generation = client._rmw_generation
+    stale_snapshot = {data_key: 10}
+
+    # Connection drops and is torn down.
+    mock_client = AsyncMock()
+    mock_client.connected = True
+    mock_client.close = AsyncMock(return_value=None)
+    client._client = mock_client
+    await client.close()
+
+    # Reconnect + a fresh RMW commits a new value.
+    await client.async_set_masked_register(reduction, 99)
+    assert client._cached_result[data_key] == 99
+
+    # The stale pre-close poll finally merges; it must NOT clobber the fresh RMW.
+    await client._merge_poll_result(stale_snapshot, poll_generation)
+    assert client._cached_result[data_key] == 99
 
 
 # ---------------------------------------------------------------------------
