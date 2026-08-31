@@ -1245,6 +1245,10 @@ class NeoPoolModbusClient:
         True when the new value must survive a restart. The new register
         value is written back into the cache so a back-to-back speed
         change (before the next poll) starts from the updated word.
+
+        The read-compute-write-back is serialized against concurrent polls
+        and other RMW writes, so a poll cannot restore a stale packed word
+        between the cache read and the write-back.
         """
         encoded = encode_filtration_speed(speed)
         # Serialize the read-compute-write-back against the poll so a read_all
@@ -1439,6 +1443,10 @@ class NeoPoolModbusClient:
         write into the same shared register (before the next poll) starts
         from the updated word.
 
+        The read-compute-write-back is serialized against concurrent polls
+        and other RMW writes, so a poll cannot restore a stale packed word
+        between the cache read and the write-back.
+
         Returns an optimistic-update dict of the coordinator-data key
         the caller can merge into its own cache without knowing the
         register layout.
@@ -1610,6 +1618,10 @@ class NeoPoolModbusClient:
         the affected modules. The new register value is written back into
         the cache so a back-to-back write into the same shared register
         (before the next poll) starts from the updated word.
+
+        The read-compute-write-back is serialized against concurrent polls
+        and other RMW writes, so a poll cannot restore a stale packed word
+        between the cache read and the write-back.
 
         Returns an optimistic-update dict of the
         ``MBF_PAR_HIDRO_COVER_ENABLE`` coordinator-data key with the new
