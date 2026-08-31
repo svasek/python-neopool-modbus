@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.1](https://github.com/svasek/python-neopool-modbus/compare/v4.6.0...v4.6.1) (2026-08-31)
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🐛 serialize RMW cache writes against the poll ([#68](https://github.com/svasek/python-neopool-modbus/issues/68)) ([0fbb27d](https://github.com/svasek/python-neopool-modbus/commit/0fbb27d34f3d38071829046b8dcc9b82b714f541))
+
 ## [4.6.0](https://github.com/svasek/python-neopool-modbus/compare/v4.5.3...v4.6.0) (2026-08-27)
 
 
