@@ -33,6 +33,7 @@ from neopool_modbus.decoders import (
     calculate_next_interval_time,
     combine_u32,
     compute_filtration_speed_state,
+    decode_aux_mode,
     decode_cell_boost,
     decode_device_time,
     decode_filtration_mode,
@@ -1150,6 +1151,42 @@ def test_encode_filtvalve_mode_roundtrip(name: str, expected: int) -> None:
 def test_encode_filtvalve_mode_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="unknown filtvalve mode"):
         encode_filtvalve_mode("bogus")
+
+
+# ---------------------------------------------------------------------------
+# decode_aux_mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("enable_val", "expected"),
+    [
+        (TimerRelayMode.ALWAYS_OFF, "manual"),
+        (TimerRelayMode.ALWAYS_ON, "manual"),
+        (TimerRelayMode.DISABLE, "auto"),
+        (TimerRelayMode.ENABLED, "auto"),
+        (TimerRelayMode.ENABLED_LINKED, "auto"),
+        (TimerRelayMode.COUNTDOWN_KEY, "countdown"),
+    ],
+)
+def test_decode_aux_mode_known_values(enable_val: int, expected: str) -> None:
+    assert decode_aux_mode(enable_val) == expected
+
+
+def test_decode_aux_mode_masks_low_byte() -> None:
+    # COUNTDOWN_KEY_PLUS (0x0105) shares the low byte with COUNTDOWN_KEY (5).
+    assert decode_aux_mode(0x0105) == "countdown"
+    # High bits on a manual value must not change the mapping.
+    assert decode_aux_mode(0xFF00 | TimerRelayMode.ALWAYS_ON) == "manual"
+
+
+def test_decode_aux_mode_none_returns_none() -> None:
+    assert decode_aux_mode(None) is None
+
+
+@pytest.mark.parametrize("enable_val", [6, 7, 0x00FE])
+def test_decode_aux_mode_unknown_returns_none(enable_val: int) -> None:
+    assert decode_aux_mode(enable_val) is None
 
 
 # ---------------------------------------------------------------------------
