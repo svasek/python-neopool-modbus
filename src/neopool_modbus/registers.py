@@ -34,9 +34,12 @@ DEFAULT_MODBUS_FRAMER = "tcp"
 class TimerRelayMode(IntEnum):
     """Relay timer enable register values (MBV_PAR_CTIMER_*)."""
 
+    DISABLE = 0  # MBV_PAR_CTIMER_DISABLE
     ENABLED = 1  # timer-controlled (MBV_PAR_CTIMER_ENABLED)
+    ENABLED_LINKED = 2  # MBV_PAR_CTIMER_ENABLED_LINKED
     ALWAYS_ON = 3  # MBV_PAR_CTIMER_ALWAYS_ON
     ALWAYS_OFF = 4  # MBV_PAR_CTIMER_ALWAYS_OFF
+    COUNTDOWN_KEY = 5  # MBV_PAR_CTIMER_COUNTDOWN_KEY
 
 
 class RelayKind(IntEnum):

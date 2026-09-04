@@ -220,6 +220,7 @@ from neopool_modbus.decoders import (
     build_timer_block,
     calculate_next_interval_time,
     combine_u32,
+    decode_aux_mode,
     decode_cell_boost,
     decode_device_time,
     decode_filtration_mode,
@@ -273,12 +274,19 @@ mappings in their own UI code:
 | `HIDRO_POLARITY_LABELS`         | `tuple[str, ...]` | return values of `decode_hidro_polarity`              |
 | `ION_POLARITY_LABELS`           | `tuple[str, ...]` | return values of `decode_ion_polarity`                |
 | `PH_PUMP_STATUS_LABELS`         | `tuple[str, ...]` | return values of `decode_ph_pump_status`              |
+| `AUX_MODE_MANUAL` / `_AUTO` / `_COUNTDOWN` | `str`  | return values of `decode_aux_mode`                    |
 
 Dict-shaped collections use the wire value as the key; tuple-shaped
 ones enumerate the string outputs of a pure decoder that reads more
 than one register. The `ph_pump_options(data)` helper returns the
 subset of `PH_PUMP_STATUS_LABELS` reachable under the current
 `MBF_PAR_RELAY_PH` mode (acid-only / base-only / both).
+
+`decode_aux_mode(enable_val)` is read-only: it groups the `enable`
+field of a parsed timer block (see `parse_timer_block`) into the
+relay's operating mode, `manual` / `auto` / `countdown`, or `None`
+for an unknown value. The countdown state is set on the controller
+itself, so there is no matching encoder.
 
 ```python
 from neopool_modbus.decoders import (

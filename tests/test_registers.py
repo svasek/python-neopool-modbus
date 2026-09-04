@@ -55,6 +55,11 @@ def test_relay_mode_values_match_timer_relay_mode() -> None:
     assert RelayMode.ALWAYS_OFF == TimerRelayMode.ALWAYS_OFF
 
 
+def test_timer_relay_mode_covers_all_ctimer_values() -> None:
+    """TimerRelayMode must mirror the controller's MBV_PAR_CTIMER_* set."""
+    assert {mode.value for mode in TimerRelayMode} == {0, 1, 2, 3, 4, 5}
+
+
 @pytest.mark.parametrize("relay", list(RelayKind))
 def test_relay_layout_covers_every_relay_kind(relay: RelayKind) -> None:
     """Every :class:`RelayKind` member must have a layout entry."""

@@ -26,6 +26,7 @@ from typing import Any
 from .registers import (
     _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     MaskedFlag,
+    TimerRelayMode,
 )
 
 
@@ -395,6 +396,41 @@ def parse_timer_block(regs: list[int]) -> dict[str, Any]:
     }
 
 
+# High-level operating mode for an AUX relay, derived from the timer-enable
+# value of its timer block. Groups the raw CTIMER value into the three states
+# a user picks in the controller UI: a fixed manual state, firmware-scheduled
+# operation, or a one-shot countdown. Mirrors the AUTO naming used by
+# :class:`RelayMode` and :class:`FiltValveMode` for timer-driven operation.
+AUX_MODE_MANUAL = "manual"
+AUX_MODE_AUTO = "auto"
+AUX_MODE_COUNTDOWN = "countdown"
+
+# CTIMER value -> AUX mode label. The controller stores the mode in the low
+# byte of the timer-enable register, so callers mask with 0xFF first.
+_AUX_MODE_BY_CTIMER: dict[int, str] = {
+    TimerRelayMode.ALWAYS_OFF: AUX_MODE_MANUAL,
+    TimerRelayMode.ALWAYS_ON: AUX_MODE_MANUAL,
+    TimerRelayMode.DISABLE: AUX_MODE_AUTO,
+    TimerRelayMode.ENABLED: AUX_MODE_AUTO,
+    TimerRelayMode.ENABLED_LINKED: AUX_MODE_AUTO,
+    TimerRelayMode.COUNTDOWN_KEY: AUX_MODE_COUNTDOWN,
+}
+
+
+def decode_aux_mode(enable_val: int | None) -> str | None:
+    """Return the AUX relay operating mode from a timer-enable value.
+
+    *enable_val* is the ``enable`` field of a parsed timer block (see
+    :func:`parse_timer_block`). The mode lives in the low byte, so the
+    value is masked with ``0xFF`` before lookup. Returns one of
+    ``manual`` / ``auto`` / ``countdown``, or ``None`` for an unknown
+    or missing value.
+    """
+    if enable_val is None:
+        return None
+    return _AUX_MODE_BY_CTIMER.get(int(enable_val) & 0xFF)
+
+
 def build_timer_block(data: dict[str, Any]) -> list[int]:
     """Convert dict of timer params to 15 Modbus registers (all as int, never None)."""
 
@@ -726,6 +762,9 @@ def ph_pump_options(data: dict[str, Any]) -> list[str]:
 
 
 __all__ = [
+    "AUX_MODE_AUTO",
+    "AUX_MODE_COUNTDOWN",
+    "AUX_MODE_MANUAL",
     "CELL_BOOST_MODE_LABELS",
     "FILTRATION_MODE_LABELS",
     "FILTRATION_SPEED_LABELS",
@@ -740,6 +779,7 @@ __all__ = [
     "calculate_next_interval_time",
     "combine_u32",
     "compute_filtration_speed_state",
+    "decode_aux_mode",
     "decode_cell_boost",
     "decode_device_time",
     "decode_filtration_mode",
