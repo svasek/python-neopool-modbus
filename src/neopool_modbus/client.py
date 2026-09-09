@@ -115,6 +115,12 @@ _NOTIF_MISC = 0x0020  # MBMSK_NOTIF_MISC_CHANGED
 # correctly implement the NOTIFICATION register still get periodic refreshes.
 _FULL_READ_INTERVAL = 60
 
+# Settle delay between consecutive Modbus transactions to the same device. Not
+# network latency (the request/response await already covers that): it is the
+# inter-frame gap the gateway/controller needs to avoid dropped or timed-out
+# requests. Applied uniformly across the poll loop and every read-modify-write.
+_INTER_REQUEST_DELAY = 0.05
+
 # 32-bit counters the firmware exposes as two adjacent 16-bit registers. After
 # every read we collapse each pair into a single combined entry and drop the
 # halves so consumers never have to recombine them by hand.
@@ -584,7 +590,7 @@ class NeoPoolModbusClient:
         )
         # Reuse _read_register_ranges for the timeout / Modbus-error →
         # NeoPool*Error translation, _failed_reads bookkeeping, and the
-        # 50ms inter-request sleep that the rest of the library applies.
+        # _INTER_REQUEST_DELAY sleep that the rest of the library applies.
         return await self._read_register_ranges(
             client,
             [(address, count)],
@@ -653,7 +659,7 @@ class NeoPoolModbusClient:
 
         registers: list[int] = []
         for address, count in ranges:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
             try:
                 rr = await read_func(address=address, count=count, device_id=self._unit)
             except TimeoutError as e:
@@ -1316,6 +1322,7 @@ class NeoPoolModbusClient:
         a decoded view of the register (the low-byte setpoints store the
         decoded setpoint, not the raw packed word).
         """
+        assert self._cache_lock.locked(), "_rmw_commit requires a held _cache_lock"
         result = await self.async_write_register(register, new_value, apply=apply)
         self._cached_result[data_key] = cache_value
         self._rmw_generation += 1
@@ -1349,7 +1356,7 @@ class NeoPoolModbusClient:
             if current is None:
                 regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
                 current = regs[0]
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(_INTER_REQUEST_DELAY)
             new_value = (current & ~FILTRATION_SPEED_MASK) | (
                 encoded << FILTRATION_SPEED_SHIFT
             )
@@ -1386,7 +1393,7 @@ class NeoPoolModbusClient:
         if interval is None:
             regs = await self.async_read_register(FILTVALVE_INTERVAL_REGISTER)
             interval = regs[0]
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
         if not interval:
             raise NeoPoolInvalidStateError(
                 "No backwash cleaning interval configured "
@@ -1537,7 +1544,7 @@ class NeoPoolModbusClient:
                         f"Empty read for setpoint register 0x{register:04X}"
                     )
                 current = regs[0]
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(_INTER_REQUEST_DELAY)
                 new_value = (current & ~SETPOINT_LOW_BYTE_MASK) | (
                     value & SETPOINT_LOW_BYTE_MASK
                 )
@@ -1814,7 +1821,7 @@ class NeoPoolModbusClient:
             )
 
             # Confirm the write
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
             # Read back the register to confirm the write
             confirm = await client.read_holding_registers(
                 address=address, count=len(value), device_id=self._unit
@@ -1996,7 +2003,7 @@ class NeoPoolModbusClient:
             _LOGGER.debug("Raw rr-%s from 0x%04X: %s", name, addr, rr.registers)
             self._successful_addresses.append((f"0x{addr:04X}", time.time()))
             timers[name] = parse_timer_block(rr.registers)
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
 
         end = time.monotonic()
         self._response_times.append(end - start)

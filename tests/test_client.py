@@ -3059,7 +3059,7 @@ async def test_async_set_filtration_speed_falls_back_to_modbus_read(config):
         neopool_modbus.FILTRATION_CONF_REGISTER
     )
     # Settle delay between the read and the write.
-    assert sleeps == [0.1]
+    assert sleeps == [0.05]
     # Expected: 0x0021 -> mask off 0x70 -> 0x0001 -> OR (0 << 4) = 0x0001.
     client.async_write_register.assert_awaited_once_with(
         neopool_modbus.FILTRATION_CONF_REGISTER, 0x0001, apply=False
@@ -3157,7 +3157,7 @@ async def test_async_start_backwash_falls_back_to_modbus_read(config):
     client.async_read_register.assert_awaited_once_with(
         neopool_modbus.FILTVALVE_INTERVAL_REGISTER
     )
-    assert sleeps == [0.1]
+    assert sleeps == [0.05]
     client.async_write_register.assert_awaited_once_with(
         neopool_modbus.FILTVALVE_REMAINING_REGISTER, 150, apply=True
     )
@@ -3756,7 +3756,7 @@ async def test_async_set_setpoint_low_byte_rmw_forwards_apply(config, apply):
 
 @pytest.mark.asyncio
 async def test_async_set_setpoint_low_byte_rmw_empty_read_raises(config):
-    """An empty/truncated base-word read raises NeoPoolModbusError, no write."""
+    """An empty base-word read raises NeoPoolModbusError instead of IndexError, no write."""
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_read_register = AsyncMock(return_value=[])
     client.async_write_register = AsyncMock(return_value={"ok": True})
