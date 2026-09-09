@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0](https://github.com/svasek/python-neopool-modbus/compare/v4.6.2...v4.7.0) (2026-09-09)
+
+
+### ✨ Features
+
+* **decoders:** ✨ decode AUX relay operating mode ([#72](https://github.com/svasek/python-neopool-modbus/issues/72)) ([00e43be](https://github.com/svasek/python-neopool-modbus/commit/00e43be34f56fe4b2e8d08ac874e3145f8032828))
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🐛 mask and RMW packed heating/intelligent setpoint ([#74](https://github.com/svasek/python-neopool-modbus/issues/74)) ([69d6e26](https://github.com/svasek/python-neopool-modbus/commit/69d6e267fa41a36a3fb09cd11d8c1ee5ca697b59))
+
 ## [4.6.2](https://github.com/svasek/python-neopool-modbus/compare/v4.6.1...v4.6.2) (2026-08-31)
 
 
