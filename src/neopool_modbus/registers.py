@@ -275,6 +275,11 @@ HIDRO_COVER_REDUCTION_SHIFT = 0
 HIDRO_SHUTDOWN_TEMP_MASK = 0xFF00  # bits 8-15: hydrolysis shutdown temperature
 HIDRO_SHUTDOWN_TEMP_SHIFT = 8
 
+# MBF_PAR_HEATING_TEMP (0x0416) / MBF_PAR_INTELLIGENT_TEMP (0x041C): the low byte
+# holds the setpoint (0-40 C); on some firmware the high byte carries unrelated
+# measured-temperature telemetry. Reads mask the low byte; writes RMW it.
+SETPOINT_LOW_BYTE_MASK = 0x00FF
+
 # MBF_PAR_HIDRO_COVER_ENABLE (0x042C) bitmask bits.
 HIDRO_COVER_ENABLE_BIT = 0x0001  # bit 0: cover sensor reduces hydrolysis
 HIDRO_TEMP_SHUTDOWN_BIT = 0x0002  # bit 1: temperature shutdown enabled
@@ -442,6 +447,14 @@ _SETPOINT_LAYOUT: Mapping[SetpointKind, tuple[int, str]] = {
     SetpointKind.SMART_TEMP_LOW: (SMART_TEMP_LOW_REGISTER, "MBF_PAR_SMART_TEMP_LOW"),
 }
 
+# SetpointKinds whose register packs the setpoint into the low byte with
+# measured-temperature telemetry in the high byte (seen on Hayward AquaRite+).
+# Writes read-modify-write the low byte to preserve the high byte; every other
+# kind is a plain full-word write.
+_LOW_BYTE_RMW_SETPOINTS: frozenset[SetpointKind] = frozenset(
+    {SetpointKind.HEATING, SetpointKind.INTELLIGENT}
+)
+
 # (register, mask, shift, coordinator_data_key) for values packed into a
 # shared register.
 _MASKED_FLAG_LAYOUT: Mapping[MaskedFlag, tuple[int, int, int, str]] = {
@@ -550,6 +563,7 @@ __all__ = [
     "RESET_USER_COUNTERS_REGISTER",
     "RelayKind",
     "RelayMode",
+    "SETPOINT_LOW_BYTE_MASK",
     "SMART_ANTI_FREEZE_REGISTER",
     "SMART_TEMP_HIGH_REGISTER",
     "SMART_TEMP_LOW_REGISTER",

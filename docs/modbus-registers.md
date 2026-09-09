@@ -759,6 +759,8 @@ Relay selected for the heating function (default: relay 7). When this value is 0
 
 Heating setpoint temperature.
 
+> **Note (empirical, not in upstream specs):** on standard Sugar Valley firmware this is a plain whole-degree setpoint (high byte 0). On some controllers (reported on Hayward AquaRite+) the register is byte-packed: the low byte holds the setpoint (0-40 C), the high byte holds independent measured-temperature telemetry. The library decodes the low byte on read and read-modify-writes only the low byte, preserving the high byte.
+
 ---
 
 ### Register 0x0417 - `MBF_PAR_CLIMA_ONOFF`
@@ -794,6 +796,8 @@ Read-only. Reports what percentage (0-100%) is being applied to the nominal filt
 ### Register 0x041C - `MBF_PAR_INTELLIGENT_TEMP`
 
 Temperature setpoint for Intelligent filtration mode.
+
+> **Note (empirical, not in upstream specs):** same byte-packing as `MBF_PAR_HEATING_TEMP` (0x0416) on the affected firmware: low byte = setpoint, high byte = telemetry. The library decodes and read-modify-writes the low byte only.
 
 ---
 

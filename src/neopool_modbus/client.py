@@ -53,6 +53,7 @@ from .registers import (
     _BITMASK_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _CONFIG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
+    _LOW_BYTE_RMW_SETPOINTS,  # pyright: ignore[reportPrivateUsage]
     _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_STATE_KEYS,  # pyright: ignore[reportPrivateUsage]
@@ -73,12 +74,11 @@ from .registers import (
     FILTVALVE_INTERVAL_REGISTER,
     FILTVALVE_MODE_REGISTER,
     FILTVALVE_REMAINING_REGISTER,
-    HEATING_SETPOINT_REGISTER,
     HIDRO_COVER_ENABLE_REGISTER,
-    INTELLIGENT_SETPOINT_REGISTER,
     MANUAL_FILTRATION_REGISTER,
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
+    SETPOINT_LOW_BYTE_MASK,
     TIMER_BLOCKS,
     BinaryConfigFlag,
     BitmaskConfigFlag,
@@ -114,6 +114,12 @@ _NOTIF_MISC = 0x0020  # MBMSK_NOTIF_MISC_CHANGED
 # Safety: force a full register read every N polls so that devices which do not
 # correctly implement the NOTIFICATION register still get periodic refreshes.
 _FULL_READ_INTERVAL = 60
+
+# Settle delay between consecutive Modbus transactions to the same device. Not
+# network latency (the request/response await already covers that): it is the
+# inter-frame gap the gateway/controller needs to avoid dropped or timed-out
+# requests. Applied uniformly across the poll loop and every read-modify-write.
+_INTER_REQUEST_DELAY = 0.05
 
 # 32-bit counters the firmware exposes as two adjacent 16-bit registers. After
 # every read we collapse each pair into a single combined entry and drop the
@@ -584,7 +590,7 @@ class NeoPoolModbusClient:
         )
         # Reuse _read_register_ranges for the timeout / Modbus-error →
         # NeoPool*Error translation, _failed_reads bookkeeping, and the
-        # 50ms inter-request sleep that the rest of the library applies.
+        # _INTER_REQUEST_DELAY sleep that the rest of the library applies.
         return await self._read_register_ranges(
             client,
             [(address, count)],
@@ -653,7 +659,7 @@ class NeoPoolModbusClient:
 
         registers: list[int] = []
         for address, count in ranges:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
             try:
                 rr = await read_func(address=address, count=count, device_id=self._unit)
             except TimeoutError as e:
@@ -979,13 +985,13 @@ class NeoPoolModbusClient:
                     "MBF_PAR_FILT_MANUAL_STATE": get_safe(reg04, 11),                           # 0x0413         Filtration status in manual mode (on = 1; off = 0)
                     "MBF_PAR_HEATING_MODE": get_safe(reg04, 12),                                # 0x0414         Heating mode: 0 = the equipment is not heated. 1 = the equipment is heating.
                     "MBF_PAR_HEATING_GPIO": get_safe(reg04, 13),                                # 0x0415         Relay number assigned to perform the heating function (by default it is relay 7). When this value is at zero, there is no relay assigned and therefore it is understood that the equipment does not control the heating. In this case, the filter modes associated with heating will not be displayed.
-                    "MBF_PAR_HEATING_TEMP": get_safe(reg04, 14),                                # 0x0416         Heating mode: Heating setpoint temperature
+                    "MBF_PAR_HEATING_TEMP": get_safe(reg04, 14, lambda v: v & SETPOINT_LOW_BYTE_MASK),  # 0x0416         Heating setpoint (low byte); high byte is measured-temp telemetry on some firmware
                     "MBF_PAR_CLIMA_ONOFF": get_safe(reg04, 15),                                 # 0x0417         Activation of the climate mode (0 = inactive, 1 = active).
                     "MBF_PAR_SMART_TEMP_HIGH": get_safe(reg04, 16),                             # 0x0418         Smart mode: Upper temperature
                     "MBF_PAR_SMART_TEMP_LOW": get_safe(reg04, 17),                              # 0x0419         Smart mode: Lower temperature
                     "MBF_PAR_SMART_ANTI_FREEZE": get_safe(reg04, 18),                           # 0x041A         Smart mode: Antifreeze mode activated (1) or not (0).
                     "MBF_PAR_SMART_INTERVAL_REDUCTION": get_safe(reg04, 19),                    # 0x041B         Smart mode: This register is read-only and reports to the outside what percentage (0 to 100%) is being applied to the nominal filtration time. 100% means that the total programmed time is being filtered.
-                    "MBF_PAR_INTELLIGENT_TEMP": get_safe(reg04, 20),                            # 0x041C         Intelligent mode: Setpoint temperature
+                    "MBF_PAR_INTELLIGENT_TEMP": get_safe(reg04, 20, lambda v: v & SETPOINT_LOW_BYTE_MASK),  # 0x041C         Intelligent setpoint (low byte); high byte is measured-temp telemetry on some firmware
                     "MBF_PAR_INTELLIGENT_FILT_MIN_TIME": get_safe(reg04, 21),                   # 0x041D         Intelligent mode: Minimum filtration time in minutes
                     "MBF_PAR_INTELLIGENT_BONUS_TIME": get_safe(reg04, 22),                      # 0x041E         Intelligent mode: Bonus time for the current set of intervals
                     "MBF_PAR_INTELLIGENT_TT_NEXT_INTERVAL": get_safe(reg04, 23),                # 0x041F         Intelligent mode: Time to next filtration interval. When it reaches 0 an interval is started and the number of seconds is reloaded for the next interval (2x3600)
@@ -1295,6 +1301,34 @@ class NeoPoolModbusClient:
             CELL_BOOST_REGISTER, encode_cell_boost(mode), apply=apply
         )
 
+    async def _rmw_commit(
+        self,
+        register: int,
+        data_key: str,
+        new_value: int,
+        cache_value: int,
+        apply: bool,
+    ) -> dict[str, Any] | None:
+        """Commit the write half of a read-modify-write.
+
+        The caller MUST already hold :attr:`_cache_lock` and have computed
+        *new_value* from a base word read under that lock; this method only
+        performs the write, records *cache_value* as the optimistic cache
+        entry for *data_key*, and stamps the key with a fresh monotonic
+        generation so a poll that snapshotted the old word before this write
+        cannot restore it afterwards. Returns whatever the write returns.
+
+        *cache_value* is usually *new_value*, but differs when the cache holds
+        a decoded view of the register (the low-byte setpoints store the
+        decoded setpoint, not the raw packed word).
+        """
+        assert self._cache_lock.locked(), "_rmw_commit requires a held _cache_lock"
+        result = await self.async_write_register(register, new_value, apply=apply)
+        self._cached_result[data_key] = cache_value
+        self._rmw_generation += 1
+        self._rmw_key_generation[data_key] = self._rmw_generation
+        return result
+
     async def async_set_filtration_speed(
         self, speed: str, apply: bool = False
     ) -> dict[str, Any] | None:
@@ -1322,17 +1356,17 @@ class NeoPoolModbusClient:
             if current is None:
                 regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
                 current = regs[0]
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(_INTER_REQUEST_DELAY)
             new_value = (current & ~FILTRATION_SPEED_MASK) | (
                 encoded << FILTRATION_SPEED_SHIFT
             )
-            result = await self.async_write_register(
-                FILTRATION_CONF_REGISTER, new_value, apply=apply
+            return await self._rmw_commit(
+                FILTRATION_CONF_REGISTER,
+                "MBF_PAR_FILTRATION_CONF",
+                new_value,
+                new_value,
+                apply,
             )
-            self._cached_result["MBF_PAR_FILTRATION_CONF"] = new_value
-            self._rmw_generation += 1
-            self._rmw_key_generation["MBF_PAR_FILTRATION_CONF"] = self._rmw_generation
-        return result
 
     async def async_start_backwash(self, apply: bool = False) -> dict[str, Any] | None:
         """Start a backwash cycle on a unit with an automatic filter valve.
@@ -1359,7 +1393,7 @@ class NeoPoolModbusClient:
         if interval is None:
             regs = await self.async_read_register(FILTVALVE_INTERVAL_REGISTER)
             interval = regs[0]
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
         if not interval:
             raise NeoPoolInvalidStateError(
                 "No backwash cleaning interval configured "
@@ -1456,18 +1490,20 @@ class NeoPoolModbusClient:
 
     async def async_set_temp_setpoint(
         self, raw: int, apply: bool = True
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         """Set the heating + intelligent target temperatures to *raw*.
 
         Both setpoints share a single UI control in the integration, so
         the values are written sequentially to keep them in sync. *raw*
         is the already-scaled register value (e.g. 250 for 25.0 °C).
         ``apply`` defaults to True; pass False for a volatile change.
+
+        Delegates to :meth:`async_set_setpoint` so both writes inherit the
+        low-byte read-modify-write and preserve the high-byte telemetry on
+        packed firmware.
         """
-        await self.async_write_register(HEATING_SETPOINT_REGISTER, raw)
-        return await self.async_write_register(
-            INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
-        )
+        await self.async_set_setpoint(SetpointKind.HEATING, raw, apply=False)
+        return await self.async_set_setpoint(SetpointKind.INTELLIGENT, raw, apply=apply)
 
     async def async_set_setpoint(
         self, kind: SetpointKind, value: int, apply: bool = True
@@ -1491,6 +1527,38 @@ class NeoPoolModbusClient:
         layout.
         """
         register, data_key = _SETPOINT_LAYOUT[kind]
+
+        if kind in _LOW_BYTE_RMW_SETPOINTS:
+            # On some firmware (Hayward AquaRite+) this register packs the
+            # setpoint into the low byte and measured-temperature telemetry
+            # into the high byte. The poll cache holds only the DECODED low
+            # byte, so read the raw register live to recover the high byte,
+            # then RMW the low byte to preserve it. Serialize the
+            # read-compute-write-back against polls and other RMW writes, and
+            # stamp the committed key with a monotonic generation so a poll
+            # that snapshotted the old value cannot restore it afterwards.
+            async with self._cache_lock:
+                regs = await self.async_read_register(register)
+                if not regs:
+                    raise NeoPoolModbusError(
+                        f"Empty read for setpoint register 0x{register:04X}"
+                    )
+                current = regs[0]
+                await asyncio.sleep(_INTER_REQUEST_DELAY)
+                new_value = (current & ~SETPOINT_LOW_BYTE_MASK) | (
+                    value & SETPOINT_LOW_BYTE_MASK
+                )
+                decoded = value & SETPOINT_LOW_BYTE_MASK
+                await self._rmw_commit(register, data_key, new_value, decoded, apply)
+            _LOGGER.debug(
+                "Setpoint %s written (low-byte RMW): raw=0x%04X decoded=%s (apply=%s)",
+                kind.name,
+                new_value,
+                decoded,
+                apply,
+            )
+            return {data_key: decoded}
+
         await self.async_write_register(register, value, apply=apply)
         _LOGGER.debug("Setpoint %s written: %s (apply=%s)", kind.name, value, apply)
         return {data_key: value}
@@ -1524,10 +1592,7 @@ class NeoPoolModbusClient:
         async with self._cache_lock:
             current = int(self._cached_result.get(data_key, 0) or 0)
             new_value = (current & ~mask) | ((value << shift) & mask)
-            await self.async_write_register(register, new_value, apply=True)
-            self._cached_result[data_key] = new_value
-            self._rmw_generation += 1
-            self._rmw_key_generation[data_key] = self._rmw_generation
+            await self._rmw_commit(register, data_key, new_value, new_value, apply=True)
         _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
         return {data_key: new_value}
 
@@ -1703,13 +1768,12 @@ class NeoPoolModbusClient:
         async with self._cache_lock:
             current = int(self._cached_result.get("MBF_PAR_HIDRO_COVER_ENABLE", 0) or 0)
             new_value = current | bit if on else current & ~bit
-            await self.async_write_register(
-                HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
-            )
-            self._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = new_value
-            self._rmw_generation += 1
-            self._rmw_key_generation["MBF_PAR_HIDRO_COVER_ENABLE"] = (
-                self._rmw_generation
+            await self._rmw_commit(
+                HIDRO_COVER_ENABLE_REGISTER,
+                "MBF_PAR_HIDRO_COVER_ENABLE",
+                new_value,
+                new_value,
+                apply=True,
             )
         _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
         return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
@@ -1757,7 +1821,7 @@ class NeoPoolModbusClient:
             )
 
             # Confirm the write
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
             # Read back the register to confirm the write
             confirm = await client.read_holding_registers(
                 address=address, count=len(value), device_id=self._unit
@@ -1939,7 +2003,7 @@ class NeoPoolModbusClient:
             _LOGGER.debug("Raw rr-%s from 0x%04X: %s", name, addr, rr.registers)
             self._successful_addresses.append((f"0x{addr:04X}", time.time()))
             timers[name] = parse_timer_block(rr.registers)
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
 
         end = time.monotonic()
         self._response_times.append(end - start)
