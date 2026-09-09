@@ -3755,6 +3755,22 @@ async def test_async_set_setpoint_low_byte_rmw_forwards_apply(config, apply):
 
 
 @pytest.mark.asyncio
+async def test_async_set_setpoint_low_byte_rmw_empty_read_raises(config):
+    """An empty/truncated base-word read raises NeoPoolModbusError, no write."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_read_register = AsyncMock(return_value=[])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    with (
+        patch("neopool_modbus.client.asyncio.sleep", new=AsyncMock()),
+        pytest.raises(NeoPoolModbusError),
+    ):
+        await client.async_set_setpoint(neopool_modbus.SetpointKind.HEATING, 30)
+
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_async_set_temp_setpoint_rmw_both_registers(config):
     """Legacy async_set_temp_setpoint RMWs both registers, forwarding apply to intelligent only."""
     client = neopool_modbus.NeoPoolModbusClient(config)

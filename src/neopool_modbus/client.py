@@ -979,13 +979,13 @@ class NeoPoolModbusClient:
                     "MBF_PAR_FILT_MANUAL_STATE": get_safe(reg04, 11),                           # 0x0413         Filtration status in manual mode (on = 1; off = 0)
                     "MBF_PAR_HEATING_MODE": get_safe(reg04, 12),                                # 0x0414         Heating mode: 0 = the equipment is not heated. 1 = the equipment is heating.
                     "MBF_PAR_HEATING_GPIO": get_safe(reg04, 13),                                # 0x0415         Relay number assigned to perform the heating function (by default it is relay 7). When this value is at zero, there is no relay assigned and therefore it is understood that the equipment does not control the heating. In this case, the filter modes associated with heating will not be displayed.
-                    "MBF_PAR_HEATING_TEMP": get_safe(reg04, 14, lambda v: v & 0xFF),            # 0x0416         Heating setpoint (low byte); high byte is measured-temp telemetry on some firmware
+                    "MBF_PAR_HEATING_TEMP": get_safe(reg04, 14, lambda v: v & SETPOINT_LOW_BYTE_MASK),  # 0x0416         Heating setpoint (low byte); high byte is measured-temp telemetry on some firmware
                     "MBF_PAR_CLIMA_ONOFF": get_safe(reg04, 15),                                 # 0x0417         Activation of the climate mode (0 = inactive, 1 = active).
                     "MBF_PAR_SMART_TEMP_HIGH": get_safe(reg04, 16),                             # 0x0418         Smart mode: Upper temperature
                     "MBF_PAR_SMART_TEMP_LOW": get_safe(reg04, 17),                              # 0x0419         Smart mode: Lower temperature
                     "MBF_PAR_SMART_ANTI_FREEZE": get_safe(reg04, 18),                           # 0x041A         Smart mode: Antifreeze mode activated (1) or not (0).
                     "MBF_PAR_SMART_INTERVAL_REDUCTION": get_safe(reg04, 19),                    # 0x041B         Smart mode: This register is read-only and reports to the outside what percentage (0 to 100%) is being applied to the nominal filtration time. 100% means that the total programmed time is being filtered.
-                    "MBF_PAR_INTELLIGENT_TEMP": get_safe(reg04, 20, lambda v: v & 0xFF),        # 0x041C         Intelligent setpoint (low byte); high byte is measured-temp telemetry on some firmware
+                    "MBF_PAR_INTELLIGENT_TEMP": get_safe(reg04, 20, lambda v: v & SETPOINT_LOW_BYTE_MASK),  # 0x041C         Intelligent setpoint (low byte); high byte is measured-temp telemetry on some firmware
                     "MBF_PAR_INTELLIGENT_FILT_MIN_TIME": get_safe(reg04, 21),                   # 0x041D         Intelligent mode: Minimum filtration time in minutes
                     "MBF_PAR_INTELLIGENT_BONUS_TIME": get_safe(reg04, 22),                      # 0x041E         Intelligent mode: Bonus time for the current set of intervals
                     "MBF_PAR_INTELLIGENT_TT_NEXT_INTERVAL": get_safe(reg04, 23),                # 0x041F         Intelligent mode: Time to next filtration interval. When it reaches 0 an interval is started and the number of seconds is reloaded for the next interval (2x3600)
@@ -1295,6 +1295,33 @@ class NeoPoolModbusClient:
             CELL_BOOST_REGISTER, encode_cell_boost(mode), apply=apply
         )
 
+    async def _rmw_commit(
+        self,
+        register: int,
+        data_key: str,
+        new_value: int,
+        cache_value: int,
+        apply: bool,
+    ) -> dict[str, Any] | None:
+        """Commit the write half of a read-modify-write.
+
+        The caller MUST already hold :attr:`_cache_lock` and have computed
+        *new_value* from a base word read under that lock; this method only
+        performs the write, records *cache_value* as the optimistic cache
+        entry for *data_key*, and stamps the key with a fresh monotonic
+        generation so a poll that snapshotted the old word before this write
+        cannot restore it afterwards. Returns whatever the write returns.
+
+        *cache_value* is usually *new_value*, but differs when the cache holds
+        a decoded view of the register (the low-byte setpoints store the
+        decoded setpoint, not the raw packed word).
+        """
+        result = await self.async_write_register(register, new_value, apply=apply)
+        self._cached_result[data_key] = cache_value
+        self._rmw_generation += 1
+        self._rmw_key_generation[data_key] = self._rmw_generation
+        return result
+
     async def async_set_filtration_speed(
         self, speed: str, apply: bool = False
     ) -> dict[str, Any] | None:
@@ -1326,13 +1353,13 @@ class NeoPoolModbusClient:
             new_value = (current & ~FILTRATION_SPEED_MASK) | (
                 encoded << FILTRATION_SPEED_SHIFT
             )
-            result = await self.async_write_register(
-                FILTRATION_CONF_REGISTER, new_value, apply=apply
+            return await self._rmw_commit(
+                FILTRATION_CONF_REGISTER,
+                "MBF_PAR_FILTRATION_CONF",
+                new_value,
+                new_value,
+                apply,
             )
-            self._cached_result["MBF_PAR_FILTRATION_CONF"] = new_value
-            self._rmw_generation += 1
-            self._rmw_key_generation["MBF_PAR_FILTRATION_CONF"] = self._rmw_generation
-        return result
 
     async def async_start_backwash(self, apply: bool = False) -> dict[str, Any] | None:
         """Start a backwash cycle on a unit with an automatic filter valve.
@@ -1505,16 +1532,17 @@ class NeoPoolModbusClient:
             # that snapshotted the old value cannot restore it afterwards.
             async with self._cache_lock:
                 regs = await self.async_read_register(register)
+                if not regs:
+                    raise NeoPoolModbusError(
+                        f"Empty read for setpoint register 0x{register:04X}"
+                    )
                 current = regs[0]
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
                 new_value = (current & ~SETPOINT_LOW_BYTE_MASK) | (
                     value & SETPOINT_LOW_BYTE_MASK
                 )
-                await self.async_write_register(register, new_value, apply=apply)
                 decoded = value & SETPOINT_LOW_BYTE_MASK
-                self._cached_result[data_key] = decoded
-                self._rmw_generation += 1
-                self._rmw_key_generation[data_key] = self._rmw_generation
+                await self._rmw_commit(register, data_key, new_value, decoded, apply)
             _LOGGER.debug(
                 "Setpoint %s written (low-byte RMW): raw=0x%04X decoded=%s (apply=%s)",
                 kind.name,
@@ -1557,10 +1585,7 @@ class NeoPoolModbusClient:
         async with self._cache_lock:
             current = int(self._cached_result.get(data_key, 0) or 0)
             new_value = (current & ~mask) | ((value << shift) & mask)
-            await self.async_write_register(register, new_value, apply=True)
-            self._cached_result[data_key] = new_value
-            self._rmw_generation += 1
-            self._rmw_key_generation[data_key] = self._rmw_generation
+            await self._rmw_commit(register, data_key, new_value, new_value, apply=True)
         _LOGGER.debug("Masked flag %s written: %s", flag.name, value)
         return {data_key: new_value}
 
@@ -1736,13 +1761,12 @@ class NeoPoolModbusClient:
         async with self._cache_lock:
             current = int(self._cached_result.get("MBF_PAR_HIDRO_COVER_ENABLE", 0) or 0)
             new_value = current | bit if on else current & ~bit
-            await self.async_write_register(
-                HIDRO_COVER_ENABLE_REGISTER, new_value, apply=True
-            )
-            self._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] = new_value
-            self._rmw_generation += 1
-            self._rmw_key_generation["MBF_PAR_HIDRO_COVER_ENABLE"] = (
-                self._rmw_generation
+            await self._rmw_commit(
+                HIDRO_COVER_ENABLE_REGISTER,
+                "MBF_PAR_HIDRO_COVER_ENABLE",
+                new_value,
+                new_value,
+                apply=True,
             )
         _LOGGER.debug("Bitmask flag %s set to %s", flag.name, on)
         return {"MBF_PAR_HIDRO_COVER_ENABLE": new_value}
