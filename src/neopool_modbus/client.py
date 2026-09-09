@@ -53,6 +53,7 @@ from .registers import (
     _BITMASK_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _CONFIG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _EXEC_COMMIT,  # pyright: ignore[reportPrivateUsage]
+    _LOW_BYTE_RMW_SETPOINTS,  # pyright: ignore[reportPrivateUsage]
     _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_LAYOUT,  # pyright: ignore[reportPrivateUsage]
     _RELAY_STATE_KEYS,  # pyright: ignore[reportPrivateUsage]
@@ -73,12 +74,11 @@ from .registers import (
     FILTVALVE_INTERVAL_REGISTER,
     FILTVALVE_MODE_REGISTER,
     FILTVALVE_REMAINING_REGISTER,
-    HEATING_SETPOINT_REGISTER,
     HIDRO_COVER_ENABLE_REGISTER,
-    INTELLIGENT_SETPOINT_REGISTER,
     MANUAL_FILTRATION_REGISTER,
     MAX_REGISTERS_PER_READ,
     RESET_USER_COUNTERS_REGISTER,
+    SETPOINT_LOW_BYTE_MASK,
     TIMER_BLOCKS,
     BinaryConfigFlag,
     BitmaskConfigFlag,
@@ -979,13 +979,13 @@ class NeoPoolModbusClient:
                     "MBF_PAR_FILT_MANUAL_STATE": get_safe(reg04, 11),                           # 0x0413         Filtration status in manual mode (on = 1; off = 0)
                     "MBF_PAR_HEATING_MODE": get_safe(reg04, 12),                                # 0x0414         Heating mode: 0 = the equipment is not heated. 1 = the equipment is heating.
                     "MBF_PAR_HEATING_GPIO": get_safe(reg04, 13),                                # 0x0415         Relay number assigned to perform the heating function (by default it is relay 7). When this value is at zero, there is no relay assigned and therefore it is understood that the equipment does not control the heating. In this case, the filter modes associated with heating will not be displayed.
-                    "MBF_PAR_HEATING_TEMP": get_safe(reg04, 14),                                # 0x0416         Heating mode: Heating setpoint temperature
+                    "MBF_PAR_HEATING_TEMP": get_safe(reg04, 14, lambda v: v & 0xFF),            # 0x0416         Heating setpoint (low byte); high byte is measured-temp telemetry on some firmware
                     "MBF_PAR_CLIMA_ONOFF": get_safe(reg04, 15),                                 # 0x0417         Activation of the climate mode (0 = inactive, 1 = active).
                     "MBF_PAR_SMART_TEMP_HIGH": get_safe(reg04, 16),                             # 0x0418         Smart mode: Upper temperature
                     "MBF_PAR_SMART_TEMP_LOW": get_safe(reg04, 17),                              # 0x0419         Smart mode: Lower temperature
                     "MBF_PAR_SMART_ANTI_FREEZE": get_safe(reg04, 18),                           # 0x041A         Smart mode: Antifreeze mode activated (1) or not (0).
                     "MBF_PAR_SMART_INTERVAL_REDUCTION": get_safe(reg04, 19),                    # 0x041B         Smart mode: This register is read-only and reports to the outside what percentage (0 to 100%) is being applied to the nominal filtration time. 100% means that the total programmed time is being filtered.
-                    "MBF_PAR_INTELLIGENT_TEMP": get_safe(reg04, 20),                            # 0x041C         Intelligent mode: Setpoint temperature
+                    "MBF_PAR_INTELLIGENT_TEMP": get_safe(reg04, 20, lambda v: v & 0xFF),        # 0x041C         Intelligent setpoint (low byte); high byte is measured-temp telemetry on some firmware
                     "MBF_PAR_INTELLIGENT_FILT_MIN_TIME": get_safe(reg04, 21),                   # 0x041D         Intelligent mode: Minimum filtration time in minutes
                     "MBF_PAR_INTELLIGENT_BONUS_TIME": get_safe(reg04, 22),                      # 0x041E         Intelligent mode: Bonus time for the current set of intervals
                     "MBF_PAR_INTELLIGENT_TT_NEXT_INTERVAL": get_safe(reg04, 23),                # 0x041F         Intelligent mode: Time to next filtration interval. When it reaches 0 an interval is started and the number of seconds is reloaded for the next interval (2x3600)
@@ -1456,18 +1456,20 @@ class NeoPoolModbusClient:
 
     async def async_set_temp_setpoint(
         self, raw: int, apply: bool = True
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         """Set the heating + intelligent target temperatures to *raw*.
 
         Both setpoints share a single UI control in the integration, so
         the values are written sequentially to keep them in sync. *raw*
         is the already-scaled register value (e.g. 250 for 25.0 °C).
         ``apply`` defaults to True; pass False for a volatile change.
+
+        Delegates to :meth:`async_set_setpoint` so both writes inherit the
+        low-byte read-modify-write and preserve the high-byte telemetry on
+        packed firmware.
         """
-        await self.async_write_register(HEATING_SETPOINT_REGISTER, raw)
-        return await self.async_write_register(
-            INTELLIGENT_SETPOINT_REGISTER, raw, apply=apply
-        )
+        await self.async_set_setpoint(SetpointKind.HEATING, raw, apply=False)
+        return await self.async_set_setpoint(SetpointKind.INTELLIGENT, raw, apply=apply)
 
     async def async_set_setpoint(
         self, kind: SetpointKind, value: int, apply: bool = True
@@ -1491,6 +1493,37 @@ class NeoPoolModbusClient:
         layout.
         """
         register, data_key = _SETPOINT_LAYOUT[kind]
+
+        if kind in _LOW_BYTE_RMW_SETPOINTS:
+            # On some firmware (Hayward AquaRite+) this register packs the
+            # setpoint into the low byte and measured-temperature telemetry
+            # into the high byte. The poll cache holds only the DECODED low
+            # byte, so read the raw register live to recover the high byte,
+            # then RMW the low byte to preserve it. Serialize the
+            # read-compute-write-back against polls and other RMW writes, and
+            # stamp the committed key with a monotonic generation so a poll
+            # that snapshotted the old value cannot restore it afterwards.
+            async with self._cache_lock:
+                regs = await self.async_read_register(register)
+                current = regs[0]
+                await asyncio.sleep(0.1)
+                new_value = (current & ~SETPOINT_LOW_BYTE_MASK) | (
+                    value & SETPOINT_LOW_BYTE_MASK
+                )
+                await self.async_write_register(register, new_value, apply=apply)
+                decoded = value & SETPOINT_LOW_BYTE_MASK
+                self._cached_result[data_key] = decoded
+                self._rmw_generation += 1
+                self._rmw_key_generation[data_key] = self._rmw_generation
+            _LOGGER.debug(
+                "Setpoint %s written (low-byte RMW): raw=0x%04X decoded=%s (apply=%s)",
+                kind.name,
+                new_value,
+                decoded,
+                apply,
+            )
+            return {data_key: decoded}
+
         await self.async_write_register(register, value, apply=apply)
         _LOGGER.debug("Setpoint %s written: %s (apply=%s)", kind.name, value, apply)
         return {data_key: value}

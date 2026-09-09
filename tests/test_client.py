@@ -511,9 +511,63 @@ async def test_perform_read_all_happy_path(config, monkeypatch):
     assert result["cell_boost_mode"] == "active"
     assert result["installed_modules"] == ["hydrolysis"]
 
+    # Heating/intelligent setpoints mask the low byte. reg04[14]=15, reg04[20]=21
+    # (high byte 0), so the mask is a no-op on standard firmware.
+    assert result["MBF_PAR_HEATING_TEMP"] == 15
+    assert result["MBF_PAR_INTELLIGENT_TEMP"] == 21
+
     # Verify that all Modbus calls were made as expected
     assert fake_modbus.read_holding_registers.await_count == 10
     assert fake_modbus.read_input_registers.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_perform_read_all_masks_packed_setpoint_high_byte(config, monkeypatch):
+    """Packed firmware: heating/intelligent setpoints decode from the low byte.
+
+    reg04[14]=0x191E and reg04[20]=0x1A1E carry the setpoint (0x1E=30) in the
+    low byte and unrelated measured-temp telemetry (0x19, 0x1A) in the high
+    byte. Both must decode to 30 regardless of the differing high byte, which
+    is what lets the coordinator auto-sync see heating == intelligent instead of
+    firing spurious re-syncs on drifting telemetry.
+    """
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    reg04 = list(range(1, 32))
+    reg04[14] = 0x191E  # MBF_PAR_HEATING_TEMP: setpoint 30, telemetry 0x19
+    reg04[20] = 0x1A1E  # MBF_PAR_INTELLIGENT_TEMP: setpoint 30, telemetry 0x1A
+
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=[
+            DummyResp([0] * 16),  # rr00
+            DummyResp([0] * 20),  # rr02
+            DummyResp([266, 10000]),  # rr02_hidro
+            DummyResp(list(range(1, 14))),  # factory block 1
+            DummyResp(list(range(14, 18))),  # factory block 2
+            DummyResp(reg04),  # installer block 1 (reg04)
+            DummyResp([32, 33, 3, *list(range(35, 45))]),  # installer block 2
+            DummyResp([0] * 8),  # installer block 3
+            DummyResp([650, 0, 750, 700, 0, 0, 700, 0, 100, 0, 0, 0, 5000, 0]),  # rr05
+            DummyResp([9, 6, 25604, 5, 0, 2240, 545, 1281, 0, 0, 0, 0, 0]),  # rr06
+        ]
+    )
+    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp([0] * 18))
+
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client._perform_read_all()
+
+    assert result["MBF_PAR_HEATING_TEMP"] == 30
+    assert result["MBF_PAR_INTELLIGENT_TEMP"] == 30
 
 
 @pytest.mark.asyncio
@@ -3298,33 +3352,45 @@ async def test_async_sync_device_time_writes_halves_then_copy_to_rtc(config):
 @pytest.mark.asyncio
 async def test_async_set_temp_setpoint_writes_both_registers(config):
     """The heating + intelligent setpoints stay in sync; second write applies."""
-    from unittest.mock import call
-
     client = neopool_modbus.NeoPoolModbusClient(config)
-    client.async_write_register = AsyncMock(
-        side_effect=[{"ok": "heat"}, {"ok": "intel"}]
-    )
-    result = await client.async_set_temp_setpoint(250)
-    # Returns the result of the apply=True (intelligent) write.
-    assert result == {"ok": "intel"}
-    assert client.async_write_register.await_args_list == [
-        call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
-        call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=True),
+    heating_reg, _ = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.HEATING
     ]
+    intel_reg, intel_key = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.INTELLIGENT
+    ]
+    # High byte 0 (standard firmware): the RMW is a plain whole-degree write.
+    client.async_read_register = AsyncMock(return_value=[0])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=AsyncMock()):
+        result = await client.async_set_temp_setpoint(250)
+
+    # Returns the optimistic dict of the apply=True (intelligent) write.
+    assert result == {intel_key: 250}
+    client.async_write_register.assert_any_await(heating_reg, 250, apply=False)
+    client.async_write_register.assert_any_await(intel_reg, 250, apply=True)
 
 
 @pytest.mark.asyncio
 async def test_async_set_temp_setpoint_apply_override(config):
-    """apply=False keeps the change volatile (no EEPROM save)."""
-    from unittest.mock import call
-
+    """apply=False keeps the intelligent change volatile (no EEPROM save)."""
     client = neopool_modbus.NeoPoolModbusClient(config)
-    client.async_write_register = AsyncMock(return_value={"ok": True})
-    await client.async_set_temp_setpoint(250, apply=False)
-    assert client.async_write_register.await_args_list == [
-        call(neopool_modbus.HEATING_SETPOINT_REGISTER, 250),
-        call(neopool_modbus.INTELLIGENT_SETPOINT_REGISTER, 250, apply=False),
+    heating_reg, _ = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.HEATING
     ]
+    intel_reg, _ = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.INTELLIGENT
+    ]
+    client.async_read_register = AsyncMock(return_value=[0])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=AsyncMock()):
+        await client.async_set_temp_setpoint(250, apply=False)
+
+    # The heating write is always volatile; apply=False keeps intelligent volatile too.
+    client.async_write_register.assert_any_await(heating_reg, 250, apply=False)
+    client.async_write_register.assert_any_await(intel_reg, 250, apply=False)
 
 
 # ---------------------------------------------------------------------------
@@ -3577,8 +3643,6 @@ async def test_async_set_manual_filtration_propagates_connection_error(config):
 @pytest.mark.parametrize(
     "kind",
     [
-        neopool_modbus.SetpointKind.HEATING,
-        neopool_modbus.SetpointKind.INTELLIGENT,
         neopool_modbus.SetpointKind.PH_MAX,
         neopool_modbus.SetpointKind.PH_MIN,
         neopool_modbus.SetpointKind.REDOX,
@@ -3590,7 +3654,7 @@ async def test_async_set_manual_filtration_propagates_connection_error(config):
 )
 @pytest.mark.asyncio
 async def test_async_set_setpoint_writes_expected_register(config, kind):
-    """Each SetpointKind writes *value* to its register and returns the data-key dict."""
+    """Each plain SetpointKind writes *value* to its register and returns the data-key dict."""
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock(return_value={"ok": True})
     register, data_key = neopool_modbus._SETPOINT_LAYOUT[kind]
@@ -3608,15 +3672,15 @@ async def test_async_set_setpoint_forwards_apply_kwarg(config, apply):
     client = neopool_modbus.NeoPoolModbusClient(config)
     client.async_write_register = AsyncMock(return_value={"ok": True})
     register, data_key = neopool_modbus._SETPOINT_LAYOUT[
-        neopool_modbus.SetpointKind.HEATING
+        neopool_modbus.SetpointKind.REDOX
     ]
 
     result = await client.async_set_setpoint(
-        neopool_modbus.SetpointKind.HEATING, 250, apply=apply
+        neopool_modbus.SetpointKind.REDOX, 700, apply=apply
     )
 
-    assert result == {data_key: 250}
-    client.async_write_register.assert_awaited_once_with(register, 250, apply=apply)
+    assert result == {data_key: 700}
+    client.async_write_register.assert_awaited_once_with(register, 700, apply=apply)
 
 
 @pytest.mark.asyncio
@@ -3626,6 +3690,94 @@ async def test_async_set_setpoint_propagates_connection_error(config):
     client.async_write_register = AsyncMock(side_effect=NeoPoolConnectionError("boom"))
     with pytest.raises(NeoPoolConnectionError, match="boom"):
         await client.async_set_setpoint(neopool_modbus.SetpointKind.REDOX, 700)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        neopool_modbus.SetpointKind.HEATING,
+        neopool_modbus.SetpointKind.INTELLIGENT,
+    ],
+)
+@pytest.mark.parametrize(
+    ("current", "value", "expected_raw", "expected_low"),
+    [
+        # Packed firmware: high byte 0x19 (telemetry) preserved, low byte set.
+        (0x191E, 30, 0x191E, 30),
+        # Different high byte, same setpoint: only the low byte changes.
+        (0x191C, 30, 0x191E, 30),
+        # Standard firmware: high byte 0, plain whole-degree round-trip.
+        (28, 30, 30, 30),
+        # Defensive: an over-range value is masked into the low byte,
+        # high byte left intact.
+        (0x1900, 300, 0x192C, 0x2C),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_set_setpoint_low_byte_rmw_preserves_high_byte(
+    config, kind, current, value, expected_raw, expected_low
+):
+    """HEATING/INTELLIGENT RMW the low byte from a live read, preserving the high byte."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_read_register = AsyncMock(return_value=[current])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._SETPOINT_LAYOUT[kind]
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=AsyncMock()):
+        result = await client.async_set_setpoint(kind, value)
+
+    # Base word comes from a live read, never the (lossy) cache.
+    client.async_read_register.assert_awaited_once_with(register)
+    client.async_write_register.assert_awaited_once_with(
+        register, expected_raw, apply=True
+    )
+    assert result == {data_key: expected_low}
+    # Optimistic cache holds the decoded low byte and is generation-stamped.
+    assert client._cached_result[data_key] == expected_low
+    assert client._rmw_key_generation[data_key] > 0
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.asyncio
+async def test_async_set_setpoint_low_byte_rmw_forwards_apply(config, apply):
+    """The RMW path forwards ``apply`` to the write."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_read_register = AsyncMock(return_value=[0x191E])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, _ = neopool_modbus._SETPOINT_LAYOUT[neopool_modbus.SetpointKind.HEATING]
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=AsyncMock()):
+        await client.async_set_setpoint(
+            neopool_modbus.SetpointKind.HEATING, 30, apply=apply
+        )
+
+    client.async_write_register.assert_awaited_once_with(register, 0x191E, apply=apply)
+
+
+@pytest.mark.asyncio
+async def test_async_set_temp_setpoint_rmw_both_registers(config):
+    """Legacy async_set_temp_setpoint RMWs both registers, forwarding apply to intelligent only."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    heating_reg, heating_key = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.HEATING
+    ]
+    intel_reg, intel_key = neopool_modbus._SETPOINT_LAYOUT[
+        neopool_modbus.SetpointKind.INTELLIGENT
+    ]
+    # Distinct high bytes so we can prove each write preserves its own.
+    reads = {heating_reg: [0x191E], intel_reg: [0x1A1E]}
+    client.async_read_register = AsyncMock(side_effect=lambda reg: reads[reg])
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    with patch("neopool_modbus.client.asyncio.sleep", new=AsyncMock()):
+        result = await client.async_set_temp_setpoint(28, apply=True)
+
+    client.async_write_register.assert_any_await(heating_reg, 0x191C, apply=False)
+    client.async_write_register.assert_any_await(intel_reg, 0x1A1C, apply=True)
+    # Returns the intelligent optimistic dict (last write wins).
+    assert result == {intel_key: 28}
+    assert client._cached_result[heating_key] == 28
+    assert client._cached_result[intel_key] == 28
 
 
 @pytest.mark.parametrize(
