@@ -32,10 +32,12 @@ from .decoders import (
     decode_cell_boost,
     decode_filtration_mode,
     decode_par_model_modules,
+    derive_timer_stop,
     encode_cell_boost,
     encode_filtration_mode,
     encode_filtration_speed,
     get_filtration_pump_type,
+    get_timer_interval,
     is_cell_boost_active,
     modbus_regs_to_ascii,
     parse_timer_block,
@@ -2011,7 +2013,22 @@ class NeoPoolModbusClient:
         return timers
 
     async def write_timer(self, block_name: str, timer_data: dict[str, Any]) -> bool:
-        """Write register with retry."""
+        """Write selected fields of a timer block, preserving the rest.
+
+        The device stores a timer as start (on) plus interval, not an
+        absolute stop. Callers may pass any of:
+
+        - on: absolute start in seconds since midnight
+        - stop: absolute end in seconds since midnight (converted to the
+          stored interval, holding on fixed unless on is also passed)
+        - interval: stored run length in seconds, written as-is
+
+        Editing on alone holds the current stop and recomputes the interval;
+        editing stop alone holds on; passing both sets the exact pair. This
+        lets callers edit either endpoint without computing the interval or
+        reading the sibling field. Other fields (enable, period, function,
+        ...) are preserved as read.
+        """
         try:
             result = await self._perform_write_timer(block_name, timer_data)
             self._last_successful_operation = datetime.now(tz=UTC)
@@ -2028,9 +2045,9 @@ class NeoPoolModbusClient:
     ) -> bool:
         """Write only requested fields to a timer block.
 
-        Preserves all other fields. Only update 'on' and 'interval' (and
-        optionally other editable fields). Other values (enable, period,
-        function, ...) are preserved as read.
+        Preserves all other fields. Accepts on / stop / interval (see
+        write_timer); stop is converted to the stored interval. Other values
+        (enable, period, function, ...) are preserved as read.
         """
         # `addr` is captured up front for the failed_writes counter inside the
         # try block; if `block_name` is unknown we raise before bumping any
@@ -2066,7 +2083,24 @@ class NeoPoolModbusClient:
             current_regs = rr.registers
             current_data = parse_timer_block(current_regs)
 
-            # 2. Update only requested fields
+            # 2. Update only requested fields. `stop` is a derived field, not a
+            # register: the device stores (on, interval). Convert edits of the
+            # absolute start or stop into the interval here, under the
+            # read-modify-write, so callers edit either endpoint independently
+            # without computing the interval or reading the sibling themselves.
+            # Both edits hold the other endpoint fixed. An explicit `interval`
+            # is respected as-is for callers that set it directly.
+            timer_data = dict(timer_data)
+            if "interval" not in timer_data and (
+                "stop" in timer_data or "on" in timer_data
+            ):
+                current_stop = derive_timer_stop(
+                    current_data["on"], current_data["interval"]
+                )
+                on = int(timer_data.get("on", current_data["on"]))
+                stop = int(timer_data.pop("stop", current_stop))
+                timer_data["interval"] = get_timer_interval(on, stop)
+            timer_data.pop("stop", None)
             for k, v in timer_data.items():
                 current_data[k] = v
 
