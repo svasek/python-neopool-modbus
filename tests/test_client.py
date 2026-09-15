@@ -1256,6 +1256,119 @@ async def test_perform_write_timer_happy_path(config, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_perform_write_timer_stop_converts_to_interval(config, monkeypatch):
+    """An absolute stop is converted to interval using the incoming on."""
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp([0] * 15))
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([], False))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    # start 06:00, stop 10:00 -> interval 4h; stop is not a register itself.
+    await client._perform_write_timer(
+        "filtration1", {"on": 6 * 3600, "stop": 10 * 3600}
+    )
+
+    block = fake_modbus.write_registers.await_args_list[0].kwargs["values"]
+    interval = block[7] | (block[8] << 16)
+    assert interval == 4 * 3600
+
+
+@pytest.mark.asyncio
+async def test_perform_write_timer_stop_uses_current_on(config, monkeypatch):
+    """A stop-only write derives the interval from the current on register."""
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    # Current block already holds on = 08:00 (regs 1,2 = low,high of 28800).
+    current = [0] * 15
+    current[1] = (8 * 3600) & 0xFFFF
+    current[2] = ((8 * 3600) >> 16) & 0xFFFF
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp(current))
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([], False))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    # stop 09:30 with unchanged on 08:00 -> interval 1h30m.
+    await client._perform_write_timer("filtration1", {"stop": 9 * 3600 + 1800})
+
+    block = fake_modbus.write_registers.await_args_list[0].kwargs["values"]
+    interval = block[7] | (block[8] << 16)
+    assert interval == 1 * 3600 + 1800
+
+
+@pytest.mark.asyncio
+async def test_perform_write_timer_on_holds_current_stop(config, monkeypatch):
+    """An on-only write holds the current stop, recomputing the interval."""
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    # Current block: on = 08:00, interval = 2h -> stop = 10:00.
+    current = [0] * 15
+    current[1] = (8 * 3600) & 0xFFFF
+    current[2] = ((8 * 3600) >> 16) & 0xFFFF
+    current[7] = (2 * 3600) & 0xFFFF
+    current[8] = ((2 * 3600) >> 16) & 0xFFFF
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp(current))
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([], False))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    # Move start to 07:00; stop must stay 10:00 -> interval grows to 3h.
+    await client._perform_write_timer("filtration1", {"on": 7 * 3600})
+
+    block = fake_modbus.write_registers.await_args_list[0].kwargs["values"]
+    on = block[1] | (block[2] << 16)
+    interval = block[7] | (block[8] << 16)
+    assert on == 7 * 3600
+    assert interval == 3 * 3600
+
+
+@pytest.mark.asyncio
+async def test_perform_write_timer_explicit_interval_respected(config, monkeypatch):
+    """An explicit interval is written as-is, not recomputed from a stop."""
+
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus.read_holding_registers = AsyncMock(return_value=DummyResp([0] * 15))
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([], False))
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    await client._perform_write_timer("filtration1", {"on": 6 * 3600, "interval": 321})
+
+    block = fake_modbus.write_registers.await_args_list[0].kwargs["values"]
+    interval = block[7] | (block[8] << 16)
+    assert interval == 321
+
+
+@pytest.mark.asyncio
 async def test_perform_write_timer_not_connected(config, monkeypatch):
     """Test _perform_write_timer returns False if client is not connected."""
 
