@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.0](https://github.com/svasek/python-neopool-modbus/compare/v4.8.0...v4.9.0) (2026-10-01)
+
+
+### ✨ Features
+
+* add per-timer filtration speed writer and fold manual-mode exit ([#77](https://github.com/svasek/python-neopool-modbus/issues/77)) ([349005d](https://github.com/svasek/python-neopool-modbus/commit/349005d22fe8006376000133a64974469f9fd645))
+
 ## [4.8.0](https://github.com/svasek/python-neopool-modbus/compare/v4.7.0...v4.8.0) (2026-09-15)
 
 
