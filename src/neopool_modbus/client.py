@@ -73,6 +73,12 @@ from .registers import (
     FILTRATION_MODE_REGISTER,
     FILTRATION_SPEED_MASK,
     FILTRATION_SPEED_SHIFT,
+    FILTRATION_TIMER1_SPEED_MASK,
+    FILTRATION_TIMER1_SPEED_SHIFT,
+    FILTRATION_TIMER2_SPEED_MASK,
+    FILTRATION_TIMER2_SPEED_SHIFT,
+    FILTRATION_TIMER3_SPEED_MASK,
+    FILTRATION_TIMER3_SPEED_SHIFT,
     FILTVALVE_INTERVAL_REGISTER,
     FILTVALVE_MODE_REGISTER,
     FILTVALVE_REMAINING_REGISTER,
@@ -122,6 +128,15 @@ _FULL_READ_INTERVAL = 60
 # inter-frame gap the gateway/controller needs to avoid dropped or timed-out
 # requests. Applied uniformly across the poll loop and every read-modify-write.
 _INTER_REQUEST_DELAY = 0.05
+
+# Per-timer filtration-speed slots packed into MBF_PAR_FILTRATION_CONF, keyed by
+# timer number. Each is a (mask, shift) pair disjoint from the live-speed slot.
+_TIMER_SPEED_SLOTS: dict[int, tuple[int, int]] = {
+    1: (FILTRATION_TIMER1_SPEED_MASK, FILTRATION_TIMER1_SPEED_SHIFT),
+    2: (FILTRATION_TIMER2_SPEED_MASK, FILTRATION_TIMER2_SPEED_SHIFT),
+    3: (FILTRATION_TIMER3_SPEED_MASK, FILTRATION_TIMER3_SPEED_SHIFT),
+}
+
 
 # 32-bit counters the firmware exposes as two adjacent 16-bit registers. After
 # every read we collapse each pair into a single combined entry and drop the
@@ -1285,9 +1300,21 @@ class NeoPoolModbusClient:
     ) -> dict[str, Any] | None:
         """Set the filtration mode (manual / auto / heating / smart / intelligent / backwash).
 
+        When leaving manual mode, the running pump is switched off first and
+        the controller is given a short settle delay before the mode change,
+        so callers do not sequence the manual-exit themselves. The manual
+        exit is best-effort and cache-dependent: it only runs when the last
+        poll saw manual mode (MBF_PAR_FILT_MODE == 0), so a cold cache skips
+        it. Because that exit toggles the pump, this can raise
+        NeoPoolInvalidStateError when a cell boost is active (the controller
+        forces the pump on); stop the boost before leaving manual mode.
+
         ``apply`` defaults to True to persist the new mode to EEPROM and
         restart the affected modules; pass False for a volatile change.
         """
+        if mode != "manual" and self._cached_result.get("MBF_PAR_FILT_MODE") == 0:
+            await self.async_set_manual_filtration(False)
+            await asyncio.sleep(_INTER_REQUEST_DELAY)
         return await self.async_write_register(
             FILTRATION_MODE_REGISTER, encode_filtration_mode(mode), apply=apply
         )
@@ -1362,6 +1389,42 @@ class NeoPoolModbusClient:
             new_value = (current & ~FILTRATION_SPEED_MASK) | (
                 encoded << FILTRATION_SPEED_SHIFT
             )
+            return await self._rmw_commit(
+                FILTRATION_CONF_REGISTER,
+                "MBF_PAR_FILTRATION_CONF",
+                new_value,
+                new_value,
+                apply,
+            )
+
+    async def async_set_filtration_speed_timer(
+        self, timer: int, speed: str, apply: bool = False
+    ) -> dict[str, Any] | None:
+        """Set the stored filtration speed for timer slot 1, 2 or 3.
+
+        RMW on the per-timer speed bits of MBF_PAR_FILTRATION_CONF, leaving
+        the live-speed slot and the other timer slots untouched. Mirrors
+        async_set_filtration_speed (cache-first, 100 ms fallback read,
+        generation-stamped commit under the cache lock) but targets the
+        timer slot selected by timer. apply defaults to False for the same
+        reason the live-speed setter does; pass True to persist to EEPROM.
+
+        Raises ValueError for an unknown timer or speed.
+        """
+        slot = _TIMER_SPEED_SLOTS.get(timer)
+        if slot is None:
+            raise ValueError(f"unknown filtration timer slot: {timer}")
+        mask, shift = slot
+        encoded = encode_filtration_speed(speed)
+        # Serialize the read-compute-write-back against the poll so a read_all
+        # cannot restore a stale packed word between our cache read and write.
+        async with self._cache_lock:
+            current = self._cached_result.get("MBF_PAR_FILTRATION_CONF")
+            if current is None:
+                regs = await self.async_read_register(FILTRATION_CONF_REGISTER)
+                current = regs[0]
+                await asyncio.sleep(_INTER_REQUEST_DELAY)
+            new_value = (current & ~mask) | (encoded << shift)
             return await self._rmw_commit(
                 FILTRATION_CONF_REGISTER,
                 "MBF_PAR_FILTRATION_CONF",

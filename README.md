@@ -340,9 +340,10 @@ addresses:
 | `async_set_setpoint(kind, value, apply=False)`  | pH / ORP / chlorine / heating / intelligent / hydrolysis / smart-temp setpoints via `SetpointKind`                  |
 | `async_set_masked_register(flag, value)`        | values packed into a shared register with a bitmask (`HIDRO_COVER_REDUCTION_PERCENT`, `HIDRO_SHUTDOWN_TEMPERATURE`) |
 | `async_set_config_option(kind, value, apply=True)` | discrete configuration slots via `ConfigKind` (filter-valve mode/period/interval, intelligent filtration minimum time, relay activation delay) |
-| `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash                                                            |
+| `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash; leaving manual mode switches the pump off and settles first |
 | `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                                                    |
-| `async_set_filtration_speed(name, apply=False)` | low / mid / high; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)                           |
+| `async_set_filtration_speed(name, apply=False)` | low / mid / high live pump speed; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)           |
+| `async_set_filtration_speed_timer(timer, name, apply=False)` | low / mid / high for timer slot 1/2/3; RMW on that slot's bits of `MBF_PAR_FILTRATION_CONF`, leaving the live and other timer slots untouched |
 | `async_start_backwash(apply=False)`             | starts a backwash on automatic filter-valve units by writing the configured cleaning duration into `MBF_PAR_FILTVALVE_REMAINING`; raises `NeoPoolInvalidStateError` when no interval is set or the valve is in `AUTO` mode |
 | `async_stop_backwash(apply=False)`              | stops a running backwash by writing 0 to `MBF_PAR_FILTVALVE_REMAINING`; the valve returns to the filtration position; raises `NeoPoolInvalidStateError` in `AUTO` mode |
 | `async_set_temp_setpoint(raw, apply=True)`      | writes the same scaled value to heating + intelligent registers in sync                                             |
@@ -351,7 +352,8 @@ addresses:
 | `async_reset_user_counters()`                   | resets user counters and chains the EEPROM save (the reset is volatile)                                             |
 | `async_sync_device_time(timestamp)`             | writes the 32-bit `timestamp` to `MBF_PAR_TIME` and triggers `MBF_ACTION_COPY_TO_RTC`                               |
 
-Unknown mode/speed names raise `ValueError` before any I/O happens.
+Unknown mode/speed names, or an out-of-range timer slot, raise
+`ValueError` before any I/O happens.
 
 `apply` controls whether the write triggers an EEPROM save + EXEC after
 the value lands. The defaults match the operation's typical use: the
