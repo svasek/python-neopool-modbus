@@ -1302,7 +1302,12 @@ class NeoPoolModbusClient:
 
         When leaving manual mode, the running pump is switched off first and
         the controller is given a short settle delay before the mode change,
-        so callers do not sequence the manual-exit themselves.
+        so callers do not sequence the manual-exit themselves. The manual
+        exit is best-effort and cache-dependent: it only runs when the last
+        poll saw manual mode (MBF_PAR_FILT_MODE == 0), so a cold cache skips
+        it. Because that exit toggles the pump, this can raise
+        NeoPoolInvalidStateError when a cell boost is active (the controller
+        forces the pump on); stop the boost before leaving manual mode.
 
         ``apply`` defaults to True to persist the new mode to EEPROM and
         restart the affected modules; pass False for a volatile change.

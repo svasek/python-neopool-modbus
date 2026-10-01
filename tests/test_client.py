@@ -3219,6 +3219,21 @@ async def test_async_set_filtration_mode_no_manual_exit_when_not_manual(config):
 
 
 @pytest.mark.asyncio
+async def test_async_set_filtration_mode_boost_blocks_manual_exit(config):
+    """Leaving manual with an active cell boost propagates the invalid state."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    # Manual mode plus an active boost: the pump-off exit must raise.
+    client._cached_result = {"MBF_PAR_FILT_MODE": 0, "MBF_CELL_BOOST": 0x05A0}
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+
+    with pytest.raises(NeoPoolInvalidStateError):
+        await client.async_set_filtration_mode("auto")
+
+    # The mode write never happens once the manual exit fails.
+    client.async_write_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_async_set_cell_boost_writes_encoded_value(config):
     """active_redox encodes to MBMSK_CELL_BOOST_ACTIVE (0x05A0)."""
     client = neopool_modbus.NeoPoolModbusClient(config)
