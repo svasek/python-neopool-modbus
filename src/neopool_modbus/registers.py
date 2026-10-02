@@ -141,10 +141,12 @@ class ConfigKind(IntEnum):
     - ``INTELLIGENT_FILT_MIN_TIME``: minimum filtration time for the
       intelligent filtration mode.
     - ``RELAY_ACTIVATION_DELAY``: relay activation delay in seconds.
-      The device firmware adds an internal +10 s offset; callers pass
-      the raw register value (subtract 10 from the human-facing value).
+      The device firmware adds an internal +10 s offset. Prefer
+      :meth:`NeoPoolModbusClient.async_set_relay_activation_delay`, which
+      takes the user-facing seconds and applies the offset; writing this
+      kind via ``async_set_config_option`` needs the raw register value.
 
-    Value labels, scale, and firmware offsets are the caller's
+    Value labels, scale, and firmware offsets are otherwise the caller's
     responsibility - this layer only knows how to write raw integers.
     """
 

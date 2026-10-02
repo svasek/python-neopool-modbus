@@ -129,6 +129,10 @@ _FULL_READ_INTERVAL = 60
 # requests. Applied uniformly across the poll loop and every read-modify-write.
 _INTER_REQUEST_DELAY = 0.05
 
+# Firmware adds +10 s internally to the relay activation delay, so the register
+# stores the user-facing value minus 10. See async_set_relay_activation_delay.
+_RELAY_ACTIVATION_DELAY_OFFSET = 10
+
 # Per-timer filtration-speed slots packed into MBF_PAR_FILTRATION_CONF, keyed by
 # timer number. Each is a (mask, shift) pair disjoint from the live-speed slot.
 _TIMER_SPEED_SLOTS: dict[int, tuple[int, int]] = {
@@ -1671,10 +1675,10 @@ class NeoPoolModbusClient:
         callers do not need to import the individual register addresses.
 
         *value* is the raw register value. Any firmware offset or
-        scale-to-UI-label mapping is the caller's responsibility (the
-        device firmware for example adds an internal +10 s offset on
-        ``RELAY_ACTIVATION_DELAY``; the caller must subtract it before
-        writing).
+        scale-to-UI-label mapping is the caller's responsibility. For
+        ``RELAY_ACTIVATION_DELAY``, whose firmware adds an internal +10 s
+        offset, prefer :meth:`async_set_relay_activation_delay`, which takes
+        the user-facing seconds and applies the offset for you.
 
         ``apply`` defaults to True because these are user-visible
         configuration slots that should persist to EEPROM and restart
@@ -1691,6 +1695,31 @@ class NeoPoolModbusClient:
             "Config option %s written: %s (apply=%s)", kind.name, value, apply
         )
         return {data_key: value}
+
+    async def async_set_relay_activation_delay(
+        self, seconds: int, apply: bool = True
+    ) -> dict[str, Any]:
+        """Set the relay activation delay from a user-facing seconds value.
+
+        The firmware stores ``seconds - 10`` and adds the 10 s back
+        internally, so :meth:`async_read_all` already surfaces the
+        user-facing value. This method hides that offset: pass the actual
+        delay in seconds and the register write is clamped to
+        ``max(0, seconds - 10)``. The returned optimistic-update dict carries
+        the user-facing *seconds*, matching what the next poll reports.
+
+        ``apply`` defaults to True, like :meth:`async_set_config_option`.
+        """
+        register, data_key = _CONFIG_LAYOUT[ConfigKind.RELAY_ACTIVATION_DELAY]
+        write_val = max(0, seconds - _RELAY_ACTIVATION_DELAY_OFFSET)
+        await self.async_write_register(register, write_val, apply=apply)
+        _LOGGER.debug(
+            "Relay activation delay set: %s s (register=%s, apply=%s)",
+            seconds,
+            write_val,
+            apply,
+        )
+        return {data_key: seconds}
 
     @staticmethod
     def _relay_timer_name(relay: RelayKind) -> str:

@@ -4686,6 +4686,45 @@ async def test_async_set_config_option_propagates_connection_error(config):
         )
 
 
+@pytest.mark.parametrize(
+    ("seconds", "expected_write"),
+    [(20, 10), (10, 0), (5, 0), (3600, 3590)],
+)
+@pytest.mark.asyncio
+async def test_async_set_relay_activation_delay_applies_offset(
+    config, seconds, expected_write
+):
+    """The user-facing delay is written as max(0, seconds - 10)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, data_key = neopool_modbus._CONFIG_LAYOUT[
+        neopool_modbus.ConfigKind.RELAY_ACTIVATION_DELAY
+    ]
+
+    result = await client.async_set_relay_activation_delay(seconds)
+
+    # The optimistic dict carries the user-facing seconds, not the register value.
+    assert result == {data_key: seconds}
+    client.async_write_register.assert_awaited_once_with(
+        register, expected_write, apply=True
+    )
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.asyncio
+async def test_async_set_relay_activation_delay_forwards_apply(config, apply):
+    """``apply`` is forwarded to ``async_write_register``."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+    client.async_write_register = AsyncMock(return_value={"ok": True})
+    register, _ = neopool_modbus._CONFIG_LAYOUT[
+        neopool_modbus.ConfigKind.RELAY_ACTIVATION_DELAY
+    ]
+
+    await client.async_set_relay_activation_delay(20, apply=apply)
+
+    client.async_write_register.assert_awaited_once_with(register, 10, apply=apply)
+
+
 # ---------------------------------------------------------------------------
 # High-level binary + bitmask config-flag write methods
 # ---------------------------------------------------------------------------
