@@ -38,6 +38,7 @@ from neopool_modbus.decoders import (
     decode_device_time,
     decode_filtration_mode,
     decode_filtration_speed,
+    decode_filtration_speed_slot,
     decode_filtvalve_mode,
     decode_hidro_polarity,
     decode_ion_polarity,
@@ -692,6 +693,40 @@ def test_is_cell_boost_active(reg_val, expected):
 )
 def test_decode_filtration_speed(idx, expected):
     assert decode_filtration_speed(idx) == expected
+
+
+@pytest.mark.parametrize(
+    ("conf", "slot", "expected"),
+    [
+        # live slot (0): mask 0x0070, shift 4
+        (0x0000, 0, "low"),
+        (0x0010, 0, "mid"),
+        (0x0020, 0, "high"),
+        (0x0030, 0, None),  # index 3 unmapped
+        # timer 1 (1): mask 0x0380, shift 7
+        (0x0000, 1, "low"),
+        (0x0080, 1, "mid"),
+        (0x0100, 1, "high"),
+        # timer 2 (2): mask 0x1C00, shift 10
+        (0x0400, 2, "mid"),
+        (0x0800, 2, "high"),
+        # timer 3 (3): mask 0xE000, shift 13
+        (0x2000, 3, "mid"),
+        (0x4000, 3, "high"),
+        # slot isolation: only the slot's own field matters, not other bits
+        (0x0070, 0, None),  # live field is 0b111 (7), unmapped
+        (0xFF8F, 0, "low"),  # bits outside 0x0070 set, live field reads 0
+        (None, 0, None),  # None guard
+        (None, 3, None),
+    ],
+)
+def test_decode_filtration_speed_slot(conf, slot, expected):
+    assert decode_filtration_speed_slot(conf, slot) == expected
+
+
+def test_decode_filtration_speed_slot_rejects_unknown_slot():
+    with pytest.raises(ValueError, match="unknown filtration speed slot"):
+        decode_filtration_speed_slot(0x0000, 4)
 
 
 @pytest.mark.parametrize(

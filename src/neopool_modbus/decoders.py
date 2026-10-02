@@ -25,6 +25,14 @@ from typing import Any
 
 from .registers import (
     _MASKED_FLAG_LAYOUT,  # pyright: ignore[reportPrivateUsage]
+    FILTRATION_SPEED_MASK,
+    FILTRATION_SPEED_SHIFT,
+    FILTRATION_TIMER1_SPEED_MASK,
+    FILTRATION_TIMER1_SPEED_SHIFT,
+    FILTRATION_TIMER2_SPEED_MASK,
+    FILTRATION_TIMER2_SPEED_SHIFT,
+    FILTRATION_TIMER3_SPEED_MASK,
+    FILTRATION_TIMER3_SPEED_SHIFT,
     MaskedFlag,
     TimerRelayMode,
 )
@@ -285,6 +293,40 @@ def encode_filtration_speed(name: str) -> int:
         ) from None
 
 
+# Filtration-speed fields packed into MBF_PAR_FILTRATION_CONF, as (mask, shift)
+# per slot: 0 = live/current speed, 1/2/3 = stored timer-1/2/3 speed.
+_FILTRATION_SPEED_SLOTS: dict[int, tuple[int, int]] = {
+    0: (FILTRATION_SPEED_MASK, FILTRATION_SPEED_SHIFT),
+    1: (FILTRATION_TIMER1_SPEED_MASK, FILTRATION_TIMER1_SPEED_SHIFT),
+    2: (FILTRATION_TIMER2_SPEED_MASK, FILTRATION_TIMER2_SPEED_SHIFT),
+    3: (FILTRATION_TIMER3_SPEED_MASK, FILTRATION_TIMER3_SPEED_SHIFT),
+}
+
+
+def decode_filtration_speed_slot(
+    par_filtration_conf: int | None, slot: int
+) -> str | None:
+    """Return the filtration-speed label packed into a slot of the register.
+
+    *par_filtration_conf* is the raw ``MBF_PAR_FILTRATION_CONF`` value; *slot*
+    selects the field: ``0`` = live/current speed, ``1``/``2``/``3`` = stored
+    timer-1/2/3 speed. Returns ``"low"``/``"mid"``/``"high"``, or ``None`` when
+    the register is absent or the field holds an unmapped value.
+
+    Raises :class:`ValueError` for an unknown *slot*.
+    """
+    if par_filtration_conf is None:
+        return None
+    try:
+        mask, shift = _FILTRATION_SPEED_SLOTS[slot]
+    except KeyError:
+        raise ValueError(
+            f"unknown filtration speed slot {slot!r}; "
+            f"expected one of {sorted(_FILTRATION_SPEED_SLOTS)}"
+        ) from None
+    return FILTRATION_SPEED_LABELS.get((int(par_filtration_conf) & mask) >> shift)
+
+
 # MBF_PAR_FILTVALVE_MODE values exposed by the integration.
 # The controller also supports 0 (disabled) and 2 (auto_linked), but
 # those states are internal and not selectable through the standard UI,
@@ -512,14 +554,8 @@ def compute_filtration_speed_state(data: dict[str, Any]) -> str:
         return "low"
 
     par_filtration_conf = data.get("MBF_PAR_FILTRATION_CONF", 0)
-    conf_speed = (par_filtration_conf & 0x0070) >> 4
-    if conf_speed == 0:
-        return "low"
-    if conf_speed == 1:
-        return "mid"
-    if conf_speed == 2:
-        return "high"
-    return "off"
+    # Reuse the live-slot decoder; an unmapped nibble means the pump is off.
+    return decode_filtration_speed_slot(par_filtration_conf, 0) or "off"
 
 
 # Possible return values of :func:`compute_filtration_speed_state`.
@@ -784,6 +820,7 @@ __all__ = [
     "decode_device_time",
     "decode_filtration_mode",
     "decode_filtration_speed",
+    "decode_filtration_speed_slot",
     "decode_filtvalve_mode",
     "decode_hidro_polarity",
     "decode_ion_polarity",

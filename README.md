@@ -225,6 +225,7 @@ from neopool_modbus.decoders import (
     decode_device_time,
     decode_filtration_mode,
     decode_filtration_speed,
+    decode_filtration_speed_slot,
     decode_filtvalve_mode,
     decode_hidro_polarity,
     decode_ion_polarity,
@@ -266,7 +267,7 @@ mappings in their own UI code:
 | Collection                      | Type              | Pairs with                                            |
 | ------------------------------- | ----------------- | ----------------------------------------------------- |
 | `FILTRATION_MODE_LABELS`        | `dict[int, str]`  | `decode_filtration_mode` / `encode_filtration_mode`   |
-| `FILTRATION_SPEED_LABELS`       | `dict[int, str]`  | `decode_filtration_speed` / `encode_filtration_speed` |
+| `FILTRATION_SPEED_LABELS`       | `dict[int, str]`  | `decode_filtration_speed` / `encode_filtration_speed` / `decode_filtration_speed_slot` |
 | `CELL_BOOST_MODE_LABELS`        | `dict[int, str]`  | `decode_cell_boost` / `encode_cell_boost`             |
 | `FILTVALVE_MODE_LABELS`         | `dict[int, str]`  | `decode_filtvalve_mode` / `encode_filtvalve_mode`     |
 | `PH_STATUS_ALARM_LABELS`        | `dict[int, str]`  | `decode_ph_alarm`                                     |
@@ -339,7 +340,8 @@ addresses:
 | `async_set_bitmask_flag(flag, on)`              | packed-bit flags (`HIDRO_COVER_ENABLE`, `HIDRO_TEMP_SHUTDOWN`) with read-modify-write                               |
 | `async_set_setpoint(kind, value, apply=False)`  | pH / ORP / chlorine / heating / intelligent / hydrolysis / smart-temp setpoints via `SetpointKind`                  |
 | `async_set_masked_register(flag, value)`        | values packed into a shared register with a bitmask (`HIDRO_COVER_REDUCTION_PERCENT`, `HIDRO_SHUTDOWN_TEMPERATURE`) |
-| `async_set_config_option(kind, value, apply=True)` | discrete configuration slots via `ConfigKind` (filter-valve mode/period/interval, intelligent filtration minimum time, relay activation delay) |
+| `async_set_config_option(kind, value, apply=True)` | discrete configuration slots via `ConfigKind` (filter-valve mode/period/interval, intelligent filtration minimum time, relay activation delay); writes the raw register value |
+| `async_set_relay_activation_delay(seconds, apply=True)` | relay activation delay from the user-facing seconds; writes `max(0, seconds - 10)` to hide the firmware +10 s offset |
 | `async_set_filtration_mode(name, apply=True)`   | manual / auto / heating / smart / intelligent / backwash; leaving manual mode switches the pump off and settles first |
 | `async_set_cell_boost(name, apply=True)`        | inactive / active / active_redox                                                                                    |
 | `async_set_filtration_speed(name, apply=False)` | low / mid / high live pump speed; RMW on `MBF_PAR_FILTRATION_CONF` (cache hot path, fresh-read cold path)           |
