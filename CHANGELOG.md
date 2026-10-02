@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.10.0](https://github.com/svasek/python-neopool-modbus/compare/v4.9.0...v4.10.0) (2026-10-02)
+
+
+### ✨ Features
+
+* decode filtration-speed slots and own the activation-delay offset ([#79](https://github.com/svasek/python-neopool-modbus/issues/79)) ([accb69e](https://github.com/svasek/python-neopool-modbus/commit/accb69ef0f1dc4da827fe1c6a453db6839b02abd))
+
 ## [4.9.0](https://github.com/svasek/python-neopool-modbus/compare/v4.8.0...v4.9.0) (2026-10-01)
 
 
