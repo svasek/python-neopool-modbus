@@ -2109,7 +2109,7 @@ class NeoPoolModbusClient:
                 self._failed_reads[f"0x{addr:04X}"] = (
                     self._failed_reads.get(f"0x{addr:04X}", 0) + 1
                 )
-                _LOGGER.error("Modbus read error from 0x%04X: %s", addr, e)
+                _LOGGER.error("Timer block read rejected: %s", e)
                 continue
             except Exception as e:  # noqa: BLE001  # per-timer read continues on any failure (pymodbus, OSError, asyncio); error is logged and the next timer is tried
                 self._failed_reads[f"0x{addr:04X}"] = (
