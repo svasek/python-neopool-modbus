@@ -396,6 +396,9 @@ async def test_perform_read_all_happy_path(config, monkeypatch):
     # Prepare a fake Modbus client with async mocks for all register reads (in the correct order!)
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
+    # The notification-clear write goes through _io_write_registers, which
+    # checks isError() on the reply, so hand back a non-error response.
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([]))
 
     # Setup values for all reads in the order used in _perform_read_all:
     # rr00 (holding), rr01 (input), rr02 (holding), rr02_hidro (holding),
@@ -1989,6 +1992,7 @@ async def test_perform_read_all_reads_only_factory_when_factory_notified(
 
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
+    fake_modbus.write_registers = AsyncMock(return_value=_DummyResp([]))
     fake_modbus.read_input_registers = AsyncMock(
         return_value=_DummyResp(
             _measure_regs(notification=neopool_modbus._NOTIF_FACTORY)
@@ -2070,6 +2074,9 @@ async def test_perform_read_all_clears_notification_register(config, monkeypatch
             _DummyResp([0] * 2),  # rr02_hidro
         ]
     )
+    # Clearing MBF_NOTIFICATION goes through _io_write_registers, which checks
+    # isError() on the reply, so hand back a non-error response.
+    fake_modbus.write_registers = AsyncMock(return_value=_DummyResp([]))
 
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
 
@@ -2175,6 +2182,7 @@ async def test_perform_read_all_cached_result_updated_after_read(config, monkeyp
 
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
+    fake_modbus.write_registers = AsyncMock(return_value=_DummyResp([]))
     fake_modbus.read_input_registers = AsyncMock(return_value=_DummyResp(measure_regs))
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=[
@@ -2240,6 +2248,7 @@ async def test_perform_read_all_reads_installer_and_user_when_both_notified(
 
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
+    fake_modbus.write_registers = AsyncMock(return_value=_DummyResp([]))
     fake_modbus.read_input_registers = AsyncMock(
         return_value=_DummyResp(_measure_regs(notification=notification))
     )
@@ -4406,6 +4415,7 @@ async def test_perform_read_all_captures_generation_before_io(config, monkeypatc
 
     fake_modbus = AsyncMock()
     fake_modbus.connected = True
+    fake_modbus.write_registers = AsyncMock(return_value=DummyResp([]))
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=[
             DummyResp(
