@@ -420,16 +420,9 @@ to import `pymodbus` to catch errors:
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `NeoPoolConnectionError`   | TCP connect fails, returned `False`, or the client is in its post-failure backoff                                                   |
 | `NeoPoolTimeoutError`      | Connect, read, or write times out (`asyncio.TimeoutError`)                                                                          |
-| `NeoPoolModbusError`       | A read returns a Modbus exception response (`isError()` true), or one of the timer write follow-ups returns `isError()`             |
+| `NeoPoolModbusError`       | A read returns a Modbus exception response (`isError()` true), or a write (including its EEPROM/EXEC follow-ups) is rejected          |
 | `NeoPoolInvalidStateError` | The device is in a state that rejects the requested operation (e.g. a relay is in AUTO mode when `async_set_relay_state` is called) |
 | `NeoPoolError`             | Common base; catch this to handle any of the above                                                                                  |
-
-> [!WARNING]
-> `NeoPoolModbusClient.async_write_register()` is the exception to the
-> table above: it returns `None` (rather than raising) on `isError()` so
-> existing callers in the Home Assistant integration keep working. A
-> future major release will tighten this to raise `NeoPoolModbusError`
-> for consistency.
 
 ```python
 from neopool_modbus import NeoPoolError, NeoPoolModbusClient
