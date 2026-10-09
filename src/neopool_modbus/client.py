@@ -552,6 +552,57 @@ class NeoPoolModbusClient:
             self._rmw_key_generation = {}
             self._rmw_generation += 1
 
+    async def _io_read(
+        self,
+        client: AsyncModbusTcpClient,
+        address: int,
+        count: int,
+        *,
+        is_input: bool,
+        error_prefix: str = "Modbus read error from",
+    ) -> list[int]:
+        """Read ``count`` registers at ``address`` and return them unwrapped.
+
+        The single choke point for the read path: picks the FC 0x03/0x04 read
+        function, passes the unit id, and turns the raw Modbus response into a
+        flat ``list[int]``. A transport error or a Modbus error reply both raise
+        a ``NeoPool*Error``; callers never see a raw response object.
+        ``error_prefix`` lets a caller keep its own message for a Modbus error
+        reply (e.g. a write confirmation read-back).
+
+        ``client`` is the already-connected client the caller holds, so one read
+        does not re-enter ``get_client``. Keeping every read behind this one
+        method keeps the call sites transport-agnostic.
+        """
+        read_func = (
+            client.read_input_registers if is_input else client.read_holding_registers
+        )
+        rr = await read_func(address=address, count=count, device_id=self._unit)
+        if rr.isError():
+            raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {rr}")
+        return list(rr.registers)
+
+    async def _io_write_registers(
+        self,
+        client: AsyncModbusTcpClient,
+        address: int,
+        values: list[int],
+        *,
+        error_prefix: str = "Write rejected at",
+    ) -> None:
+        """Write ``values`` at ``address`` (FC 0x10), raising on a Modbus error.
+
+        The single choke point for the write path. ``client`` is the caller's
+        already-connected client; a Modbus error reply raises ``NeoPoolModbusError``
+        (with ``error_prefix``) so callers cannot merge optimistic state after a
+        rejected write.
+        """
+        result = await client.write_registers(
+            address=address, values=values, device_id=self._unit
+        )
+        if result.isError():
+            raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {result}")
+
     async def async_read_register(
         self,
         address: int,
@@ -606,16 +657,13 @@ class NeoPoolModbusClient:
             raise NeoPoolConnectionError(
                 f"Modbus client connection failed to {self._host}:{self._port}"
             )
-        read_func = (
-            client.read_input_registers if is_input else client.read_holding_registers
-        )
         # Reuse _read_register_ranges for the timeout / Modbus-error →
         # NeoPool*Error translation, _failed_reads bookkeeping, and the
         # _INTER_REQUEST_DELAY sleep that the rest of the library applies.
         return await self._read_register_ranges(
             client,
             [(address, count)],
-            read_func=read_func,
+            is_input=is_input,
             label=f"async_read_register(0x{address:04X})",
         )
 
@@ -661,7 +709,7 @@ class NeoPoolModbusClient:
         self,
         client: AsyncModbusTcpClient,
         ranges: list[tuple[int, int]],
-        read_func: Callable[..., Any] | None = None,
+        is_input: bool = False,
         label: str = "",
     ) -> list[int]:
         """Read one or more register ranges and return a flat list of values.
@@ -671,18 +719,20 @@ class NeoPoolModbusClient:
         Args:
             client: Connected Modbus client.
             ranges: List of (start_address, count) tuples.
-            read_func: The pymodbus read function to use.
-                       Defaults to client.read_holding_registers.
+            is_input: Read Input Registers (FC 0x04) when True, else Holding
+                      Registers (FC 0x03).
             label: Optional label for debug/warning log messages (e.g. "rr01").
         """
-        if read_func is None:
-            read_func = client.read_holding_registers
-
         registers: list[int] = []
         for address, count in ranges:
             await asyncio.sleep(_INTER_REQUEST_DELAY)
             try:
-                rr = await read_func(address=address, count=count, device_id=self._unit)
+                values = await self._io_read(client, address, count, is_input=is_input)
+            except NeoPoolModbusError:
+                self._failed_reads[f"0x{address:04X}"] = (
+                    self._failed_reads.get(f"0x{address:04X}", 0) + 1
+                )
+                raise
             except TimeoutError as e:
                 self._failed_reads[f"0x{address:04X}"] = (
                     self._failed_reads.get(f"0x{address:04X}", 0) + 1
@@ -695,24 +745,17 @@ class NeoPoolModbusClient:
                     self._failed_reads.get(f"0x{address:04X}", 0) + 1
                 )
                 raise NeoPoolModbusError(f"Read error at 0x{address:04X}: {e}") from e
-            if rr.isError():
-                self._failed_reads[f"0x{address:04X}"] = (
-                    self._failed_reads.get(f"0x{address:04X}", 0) + 1
-                )
-                raise NeoPoolModbusError(
-                    f"Modbus read error from 0x{address:04X}: {rr}"
-                )
             self._successful_addresses.append((f"0x{address:04X}", time.time()))
-            registers.extend(rr.registers)
+            registers.extend(values)
             _log_prefix = f"Raw {label} from" if label else "Raw registers from"
-            _LOGGER.debug("%s 0x%04X: %s", _log_prefix, address, rr.registers)
-            if len(rr.registers) < count:  # pragma: no cover
+            _LOGGER.debug("%s 0x%04X: %s", _log_prefix, address, values)
+            if len(values) < count:  # pragma: no cover
                 _LOGGER.warning(
                     "%s 0x%04X: expected at least %d registers, got %d",
                     _log_prefix,
                     address,
                     count,
-                    len(rr.registers),
+                    len(values),
                 )
         return registers
 
@@ -771,7 +814,7 @@ class NeoPoolModbusClient:
             reg01 = await self._read_register_ranges(
                 client,
                 [(0x0100, 18)],  # 0x0100-0x0111
-                read_func=client.read_input_registers,
+                is_input=True,
                 label="rr01",
             )
 
@@ -1151,9 +1194,7 @@ class NeoPoolModbusClient:
 
             if notification:
                 try:
-                    await client.write_registers(
-                        address=0x0110, values=[0], device_id=self._unit
-                    )
+                    await self._io_write_registers(client, 0x0110, [0])
                     _LOGGER.debug(
                         "MBF_NOTIFICATION register cleared (was 0x%04X)", notification
                     )
@@ -1900,16 +1941,11 @@ class NeoPoolModbusClient:
             if not isinstance(value, list):
                 value = [value]
 
-            result = await client.write_registers(
-                address=address, values=value, device_id=self._unit
-            )
-            if result.isError():
-                # Raise (not return None) so callers cannot merge an optimistic
-                # state after a rejected write; the NeoPoolError handler below
-                # bumps _failed_writes + closes the client uniformly.
-                raise NeoPoolModbusError(  # noqa: TRY301
-                    f"Write rejected at 0x{address:04X}: {result}"
-                )
+            # A rejected write raises inside _io_write_registers (it never
+            # returns None), so callers cannot merge optimistic state; the
+            # NeoPoolError handler below bumps _failed_writes + closes the
+            # client uniformly.
+            await self._io_write_registers(client, address, value)
             _LOGGER.debug(
                 "Wrote register(s) at 0x%04X: %s", address, [int(v) for v in value]
             )
@@ -1917,13 +1953,13 @@ class NeoPoolModbusClient:
             # Confirm the write
             await asyncio.sleep(_INTER_REQUEST_DELAY)
             # Read back the register to confirm the write
-            confirm = await client.read_holding_registers(
-                address=address, count=len(value), device_id=self._unit
+            confirmed = await self._io_read(
+                client,
+                address,
+                len(value),
+                is_input=False,
+                error_prefix="Write confirmation read failed at",
             )
-            if confirm.isError():
-                raise NeoPoolModbusError(  # noqa: TRY301
-                    f"Write confirmation read failed at 0x{address:04X}: {confirm}"
-                )
 
             # Verify the read-back matches the written value.
             # Skip verification for command registers (e.g. EEPROM save, EXEC)
@@ -1933,12 +1969,10 @@ class NeoPoolModbusClient:
             if (
                 address not in COMMAND_REGISTERS
                 and address not in COUNTDOWN_REGISTERS
-                and confirm.registers != value
+                and confirmed != value
             ):
                 wrote = value if len(value) > 1 else value[0]
-                read_back = (
-                    confirm.registers if len(value) > 1 else confirm.registers[0]
-                )
+                read_back = confirmed if len(value) > 1 else confirmed[0]
                 _LOGGER.warning(
                     "Write verification mismatch at 0x%04X: wrote %s, read back %s. "
                     "This may indicate a framing misconfiguration between the "
@@ -1951,24 +1985,18 @@ class NeoPoolModbusClient:
             # If apply is True, save the configuration to EEPROM and execute
             if apply:
                 await asyncio.sleep(0.1)
-                result = await client.write_registers(
-                    address=EEPROM_SAVE_REGISTER, values=[1], device_id=self._unit
+                await self._io_write_registers(
+                    client,
+                    EEPROM_SAVE_REGISTER,
+                    [1],
+                    error_prefix="EEPROM save failed at",
                 )
-
-                if result.isError():  # pragma: no cover
-                    raise NeoPoolModbusError(  # noqa: TRY301
-                        f"EEPROM save failed (0x{EEPROM_SAVE_REGISTER:04X}): {result}"
-                    )
                 _LOGGER.debug("EEPROM save triggered (0x%04X)", EEPROM_SAVE_REGISTER)
 
                 await asyncio.sleep(0.1)
-                result = await client.write_registers(
-                    address=EXEC_REGISTER, values=[1], device_id=self._unit
+                await self._io_write_registers(
+                    client, EXEC_REGISTER, [1], error_prefix="EXEC failed at"
                 )
-                if result.isError():  # pragma: no cover
-                    raise NeoPoolModbusError(  # noqa: TRY301
-                        f"EXEC failed (0x{EXEC_REGISTER:04X}): {result}"
-                    )
                 _LOGGER.debug("Config EXEC triggered (0x%04X)", EXEC_REGISTER)
                 await asyncio.sleep(0.1)
 
@@ -1978,9 +2006,7 @@ class NeoPoolModbusClient:
             return {
                 "address": address,
                 "value": value if len(value) > 1 else value[0],
-                "confirmed": (
-                    confirm.registers if len(value) > 1 else confirm.registers[0]
-                ),
+                "confirmed": confirmed if len(value) > 1 else confirmed[0],
             }
 
         except NeoPoolError:
@@ -2079,24 +2105,22 @@ class NeoPoolModbusClient:
                 timers[name] = self._cached_timers[name]
                 continue
             try:
-                rr = await client.read_holding_registers(
-                    address=addr, count=15, device_id=self._unit
+                regs = await self._io_read(client, addr, 15, is_input=False)
+            except NeoPoolModbusError as e:
+                self._failed_reads[f"0x{addr:04X}"] = (
+                    self._failed_reads.get(f"0x{addr:04X}", 0) + 1
                 )
+                _LOGGER.error("Timer block read rejected: %s", e)
+                continue
             except Exception as e:  # noqa: BLE001  # per-timer read continues on any failure (pymodbus, OSError, asyncio); error is logged and the next timer is tried
                 self._failed_reads[f"0x{addr:04X}"] = (
                     self._failed_reads.get(f"0x{addr:04X}", 0) + 1
                 )
                 _LOGGER.error("Timer block read error at 0x%04X: %s", addr, e)
                 continue
-            if rr.isError():
-                self._failed_reads[f"0x{addr:04X}"] = (
-                    self._failed_reads.get(f"0x{addr:04X}", 0) + 1
-                )
-                _LOGGER.error("Modbus read error from 0x%04X: %s", addr, rr)
-                continue
-            _LOGGER.debug("Raw rr-%s from 0x%04X: %s", name, addr, rr.registers)
+            _LOGGER.debug("Raw rr-%s from 0x%04X: %s", name, addr, regs)
             self._successful_addresses.append((f"0x{addr:04X}", time.time()))
-            timers[name] = parse_timer_block(rr.registers)
+            timers[name] = parse_timer_block(regs)
             await asyncio.sleep(_INTER_REQUEST_DELAY)
 
         end = time.monotonic()
@@ -2161,18 +2185,16 @@ class NeoPoolModbusClient:
                     "Modbus client connection failed to %s:%s", self._host, self._port
                 )
                 return False
-            rr = await client.read_holding_registers(
-                address=addr, count=15, device_id=self._unit
-            )
-            if rr.isError():
+            try:
+                current_regs = await self._io_read(client, addr, 15, is_input=False)
+            except NeoPoolModbusError as e:
                 self._failed_writes[f"0x{addr:04X}"] = (
                     self._failed_writes.get(f"0x{addr:04X}", 0) + 1
                 )
                 _LOGGER.error(
-                    "Could not read timer block at 0x%04X before write: %s", addr, rr
+                    "Could not read timer block at 0x%04X before write: %s", addr, e
                 )
                 return False
-            current_regs = rr.registers
             current_data = parse_timer_block(current_regs)
 
             # 2. Update only requested fields. `stop` is a derived field, not a
@@ -2212,23 +2234,21 @@ class NeoPoolModbusClient:
                     "Modbus client connection failed to %s:%s", self._host, self._port
                 )
                 return False
-            result = await client.write_registers(
-                address=addr, values=regs, device_id=self._unit
-            )
-            if result.isError():
+            try:
+                await self._io_write_registers(client, addr, regs)
+            except NeoPoolModbusError as e:
                 self._failed_writes[f"0x{addr:04X}"] = (
                     self._failed_writes.get(f"0x{addr:04X}", 0) + 1
                 )
-                _LOGGER.error("Timer block write error at 0x%04X: %s", addr, result)
+                _LOGGER.error("Timer block write error at 0x%04X: %s", addr, e)
                 return False
 
             _LOGGER.debug("Wrote timer block %s (0x%04X): %s", block_name, addr, regs)
             await asyncio.sleep(0.1)
             # Write to EEPROM and execute
-            result = await client.write_registers(
-                address=EEPROM_SAVE_REGISTER, values=[1], device_id=self._unit
-            )
-            if result.isError():
+            try:
+                await self._io_write_registers(client, EEPROM_SAVE_REGISTER, [1])
+            except NeoPoolModbusError as e:
                 self._failed_writes[f"0x{EEPROM_SAVE_REGISTER:04X}"] = (
                     self._failed_writes.get(f"0x{EEPROM_SAVE_REGISTER:04X}", 0) + 1
                 )
@@ -2236,14 +2256,13 @@ class NeoPoolModbusClient:
                     "EEPROM save failed (0x%04X) for timer block %s: %s",
                     EEPROM_SAVE_REGISTER,
                     block_name,
-                    result,
+                    e,
                 )
                 return False
             await asyncio.sleep(0.1)
-            result = await client.write_registers(
-                address=EXEC_REGISTER, values=[1], device_id=self._unit
-            )
-            if result.isError():
+            try:
+                await self._io_write_registers(client, EXEC_REGISTER, [1])
+            except NeoPoolModbusError as e:
                 self._failed_writes[f"0x{EXEC_REGISTER:04X}"] = (
                     self._failed_writes.get(f"0x{EXEC_REGISTER:04X}", 0) + 1
                 )
@@ -2251,7 +2270,7 @@ class NeoPoolModbusClient:
                     "EXEC failed (0x%04X) for timer block %s: %s",
                     EXEC_REGISTER,
                     block_name,
-                    result,
+                    e,
                 )
                 return False
             await asyncio.sleep(0.1)
