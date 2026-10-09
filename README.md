@@ -106,6 +106,32 @@ transport underneath the handle (TCP, RTU-over-TCP, or a serial line) is
 transparent to this library. Omit `unit` to keep the self-owned pymodbus
 connection described above.
 
+To obtain that handle inside Home Assistant, a consumer asks the `modbus`
+integration for a unit on the device's link. The link params need a framer
+name the shared connection understands (`"socket"` / `"rtu"` / `"ascii"`);
+`framer_to_socket_name` translates the library's `modbus_framer` config value
+(`"tcp"` / `"rtu"`) to it, so the mapping lives here rather than in each
+consumer:
+
+```python
+from homeassistant.components.modbus import async_get_unit
+from modbus_connection import ModbusTcpParams
+
+from neopool_modbus import NeoPoolModbusClient
+from neopool_modbus.registers import framer_to_socket_name
+
+params = ModbusTcpParams(
+    host=entry.data["host"],
+    port=entry.data.get("port", 502),
+    framer=framer_to_socket_name(entry.data.get("modbus_framer", "tcp")),
+)
+unit = async_get_unit(hass, entry, params, entry.data.get("unit_id", 1))
+client = NeoPoolModbusClient(entry.data, unit=unit)
+```
+
+`framer_to_socket_name` returns a plain string, so the library stays free of a
+dependency on `modbus-connection`; the consumer builds the params type itself.
+
 ### Reading individual registers
 
 For one-off reads by address, `async_read_register(address, count=1)` picks
@@ -210,6 +236,7 @@ from neopool_modbus.registers import (
     TIMER_BLOCKS,
     UV_MODE_REGISTER,
     find_corrupted_gpio_registers,
+    framer_to_socket_name,
     is_input_register,
     is_valid_relay_gpio,
 )

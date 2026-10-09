@@ -49,9 +49,11 @@ def _resolve_framer(framer: str) -> FramerType:
     framer_str = framer.strip().lower()
     if framer_str == "rtu":
         return FramerType.RTU
-    if framer_str == "tcp":
+    # "tcp" is the library's historical name for Modbus TCP; "socket" is the
+    # framer name shared connections use for the same thing.
+    if framer_str in ("tcp", "socket"):
         return FramerType.SOCKET
-    raise ValueError(f"Unknown framer: {framer!r} (expected 'tcp' or 'rtu')")
+    raise ValueError(f"Unknown framer: {framer!r} (expected 'tcp', 'socket', or 'rtu')")
 
 
 async def async_probe_serial(
@@ -81,8 +83,8 @@ async def async_probe_serial(
             legacy master/slave terminology.
         slave_id: Deprecated alias for ``unit_id`` kept for backwards
             compatibility. Ignored when ``unit_id`` is set.
-        framer: ``"tcp"`` (Modbus TCP / MBAP, default) or ``"rtu"``
-            (RTU-over-TCP for gateways like Elfin EW11).
+        framer: ``"tcp"`` or ``"socket"`` (Modbus TCP / MBAP, default) or
+            ``"rtu"`` (RTU-over-TCP for gateways like Elfin EW11).
         timeout: Per-call timeout in seconds for both the connect and the
             register read.
 
@@ -90,7 +92,7 @@ async def async_probe_serial(
         The 24-character hex serial string.
 
     Raises:
-        ValueError: ``framer`` is not ``"tcp"`` or ``"rtu"``.
+        ValueError: ``framer`` is not ``"tcp"``, ``"socket"``, or ``"rtu"``.
         NeoPoolTimeoutError: Connect or read timed out.
         NeoPoolConnectionError: TCP connect was refused or returned False.
         NeoPoolModbusError: The device returned a Modbus exception

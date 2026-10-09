@@ -31,6 +31,30 @@ from typing import Any
 DEFAULT_MODBUS_FRAMER = "tcp"
 
 
+def framer_to_socket_name(modbus_framer: str) -> str:
+    """Translate a ``modbus_framer`` config value to a shared-connection framer name.
+
+    A shared Modbus connection (Home Assistant's modbus integration, backed by
+    ``modbus-connection``) names its framers ``"socket"``/``"rtu"``/``"ascii"``.
+    Modbus TCP (MBAP) is ``"socket"`` there.
+
+    Both spellings are accepted for the Modbus TCP framer: the library's
+    historical ``"tcp"`` and the framer name ``"socket"`` both map to
+    ``"socket"``; ``"rtu"`` and ``"ascii"`` pass through. An unknown value
+    falls back to ``"socket"`` (Modbus TCP), matching how the owned-connection
+    path treats it.
+
+    Returns a plain string so callers can build their host's own params type
+    without this library depending on it.
+    """
+    return {
+        "tcp": "socket",
+        "socket": "socket",
+        "rtu": "rtu",
+        "ascii": "ascii",
+    }.get(modbus_framer.strip().lower(), "socket")
+
+
 class TimerRelayMode(IntEnum):
     """Relay timer enable register values (MBV_PAR_CTIMER_*)."""
 
@@ -575,6 +599,7 @@ __all__ = [
     "TimerRelayMode",
     "UV_MODE_REGISTER",
     "find_corrupted_gpio_registers",
+    "framer_to_socket_name",
     "is_input_register",
     "is_valid_relay_gpio",
 ]
