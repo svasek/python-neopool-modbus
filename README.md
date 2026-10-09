@@ -80,6 +80,32 @@ asyncio.run(main())
 The client is lazy — it opens the TCP connection on first use and reuses it
 across calls; `close()` releases the socket and resets retry/backoff state.
 
+### Borrowing a shared Modbus connection
+
+Instead of owning its own connection, the client can borrow a shared Modbus
+handle by passing `unit`:
+
+```python
+from neopool_modbus import NeoPoolModbusClient
+
+# `unit` is any object implementing the ModbusUnit protocol (connected,
+# read_holding_registers, read_input_registers, write_registers). Home
+# Assistant's modbus integration hands one out via async_get_unit().
+client = NeoPoolModbusClient({"host": "192.168.1.42", "unit_id": 1}, unit=unit)
+
+data = await client.async_read_all()
+# No close() needed: the client does not own the connection, so it never
+# opens or tears one down. The owner of the shared handle manages its life.
+```
+
+In this mode the client routes every read and write through the handle and
+runs none of its own connect, retry, backoff or health-check machinery; the
+`host`/`port`/`modbus_framer` entries are kept only for diagnostics and log
+messages. Because the protocol only speaks in register reads and writes, the
+transport underneath the handle (TCP, RTU-over-TCP, or a serial line) is
+transparent to this library. Omit `unit` to keep the self-owned pymodbus
+connection described above.
+
 ### Reading individual registers
 
 For one-off reads by address, `async_read_register(address, count=1)` picks
@@ -111,6 +137,7 @@ input/holding namespace boundary or extend past the 16-bit address space.
 ```python
 from neopool_modbus import (
     NeoPoolModbusClient,
+    ModbusUnit,
     NeoPoolError,
     NeoPoolConnectionError,
     NeoPoolInvalidStateError,
@@ -441,6 +468,10 @@ unknown filtration mode name; those are not transport failures.
 ## Features
 
 - Async I/O on top of `pymodbus.AsyncModbusTcpClient`
+- Optionally borrows a shared `ModbusUnit` handle instead of owning a
+  connection, so a host (such as Home Assistant's modbus integration) can
+  share one connection across integrations; the transport under the handle
+  (TCP, RTU-over-TCP, or serial) is transparent to this library
 - Batched register reads -- one round-trip per protocol page, with
   notification-bit-driven cache invalidation so unchanged pages skip the read
 - Public read-by-address API (`async_read_register`) that automatically

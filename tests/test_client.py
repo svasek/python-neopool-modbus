@@ -4959,3 +4959,126 @@ async def test_async_set_bitmask_flag_updates_cache_for_next_write(config):
     assert (
         client._cached_result["MBF_PAR_HIDRO_COVER_ENABLE"] == cover_bit | shutdown_bit
     )
+
+
+# Injected ModbusUnit (shared-connection) mode
+# --------------------------------------------
+# When a NeoPoolModbusClient is handed a ``unit`` it borrows that shared handle
+# for all register I/O instead of owning a pymodbus connection. The handle
+# returns register values directly and raises on failure.
+
+
+def _fake_unit(*, connected=True, holding=None, input=None):
+    """Build a fake ModbusUnit: AsyncMock reads/writes, a connected property."""
+    unit = AsyncMock()
+    unit.connected = connected
+    unit.read_holding_registers = AsyncMock(
+        return_value=[0] if holding is None else holding
+    )
+    unit.read_input_registers = AsyncMock(return_value=[0] if input is None else input)
+    unit.write_registers = AsyncMock(return_value=None)
+    return unit
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_get_client_returns_unit(config):
+    """get_client hands back the injected unit without touching pymodbus."""
+    unit = _fake_unit()
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+    assert await client.get_client() is unit
+    assert client._client is None
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_read_holding(config):
+    """async_read_register routes a holding read through the unit."""
+    unit = _fake_unit(holding=[0x1234])
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    # 0x0400 is a holding-register address.
+    result = await client.async_read_register(0x0400, count=1)
+
+    assert result == [0x1234]
+    unit.read_holding_registers.assert_awaited_once_with(0x0400, 1)
+    unit.read_input_registers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_read_input(config):
+    """async_read_register routes a 0x01xx read as an input read through the unit."""
+    unit = _fake_unit(input=[0x5678])
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    # 0x0102 is on the input-register page.
+    result = await client.async_read_register(0x0102, count=1)
+
+    assert result == [0x5678]
+    unit.read_input_registers.assert_awaited_once_with(0x0102, 1)
+    unit.read_holding_registers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_write(config):
+    """A write routes through the unit and reads back for confirmation."""
+    unit = _fake_unit(holding=[123])
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    result = await client.async_write_register(0x0400, 123)
+
+    assert result == {"address": 0x0400, "value": 123, "confirmed": 123}
+    unit.write_registers.assert_any_await(0x0400, [123])
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_read_timeout_maps_to_neopool_timeout(config):
+    """A TimeoutError from the unit surfaces as NeoPoolTimeoutError."""
+    unit = _fake_unit()
+    unit.read_holding_registers = AsyncMock(side_effect=TimeoutError("slow"))
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    with pytest.raises(neopool_modbus.NeoPoolTimeoutError):
+        await client.async_read_register(0x0400, count=1)
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_read_error_maps_to_neopool_modbus_error(config):
+    """A non-timeout failure from the unit surfaces as NeoPoolModbusError."""
+    unit = _fake_unit()
+    unit.read_holding_registers = AsyncMock(side_effect=OSError("boom"))
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    with pytest.raises(neopool_modbus.NeoPoolModbusError):
+        await client.async_read_register(0x0400, count=1)
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_write_error_maps_to_neopool_modbus_error(config):
+    """A non-timeout write failure from the unit surfaces as NeoPoolModbusError."""
+    unit = _fake_unit(holding=[0])
+    unit.write_registers = AsyncMock(side_effect=OSError("rejected"))
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    with pytest.raises(neopool_modbus.NeoPoolModbusError):
+        await client.async_write_register(0x0400, 1)
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_write_timeout_maps_to_neopool_timeout(config):
+    """A write TimeoutError from the unit surfaces as NeoPoolTimeoutError."""
+    unit = _fake_unit(holding=[0])
+    unit.write_registers = AsyncMock(side_effect=TimeoutError("slow"))
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    with pytest.raises(neopool_modbus.NeoPoolTimeoutError):
+        await client.async_write_register(0x0400, 1)
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_connection_stats_connected(config):
+    """connection_stats reports the unit's connected state, not the (unused) client."""
+    unit = _fake_unit(connected=True)
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+    assert client.connection_stats["connected"] is True
+
+    unit.connected = False
+    assert client.connection_stats["connected"] is False

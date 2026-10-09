@@ -20,7 +20,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, overload
+from typing import Any, Protocol, cast, overload
 
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.framer import FramerType
@@ -203,18 +203,56 @@ def _collapse_u32_register_pairs(result: dict[str, Any]) -> None:
             result[combined] = value
 
 
+class ModbusUnit(Protocol):
+    """The slice of a shared Modbus unit handle this client drives.
+
+    A structural type for the ``ModbusUnit`` handed out by Home Assistant's
+    ``modbus`` integration (from the ``modbus-connection`` package). Declaring
+    it here, rather than importing that package, keeps the library free of a
+    Home Assistant runtime dependency: a handle is accepted by shape. A read
+    returns the register values directly and a failure raises; the unit id is
+    already bound to the handle, so no device id is passed per call.
+    """
+
+    @property
+    def connected(self) -> bool:
+        """Whether the shared handle's connection is currently up."""
+        ...
+
+    async def read_holding_registers(self, address: int, count: int) -> list[int]:
+        """Read ``count`` holding registers (FC 0x03) starting at ``address``."""
+        ...
+
+    async def read_input_registers(self, address: int, count: int) -> list[int]:
+        """Read ``count`` input registers (FC 0x04) starting at ``address``."""
+        ...
+
+    async def write_registers(self, address: int, values: list[int]) -> None:
+        """Write ``values`` to consecutive registers (FC 0x10) from ``address``."""
+        ...
+
+
 class NeoPoolModbusClient:
-    def __init__(self, config: Mapping[str, Any]) -> None:
+    def __init__(
+        self, config: Mapping[str, Any], *, unit: ModbusUnit | None = None
+    ) -> None:
         """Initialise the client from a config mapping.
 
         ``config`` must contain ``host``; ``port`` (default 502),
         ``unit_id`` (default 1) and ``modbus_framer`` (default ``tcp``)
         are optional. The legacy ``slave_id`` key is still accepted as a
         fallback when ``unit_id`` is not present.
+
+        When ``unit`` is given, the client borrows that shared Modbus handle
+        for all register I/O and does not open or own a connection: the
+        ``host``/``port``/``modbus_framer`` entries are then only used for
+        diagnostics and log messages. When ``unit`` is omitted, the client
+        owns a pymodbus connection to ``host``:``port`` as before.
         """
         self._host: str = config["host"]
         self._port = config.get("port", 502)
         self._unit = config.get("unit_id", config.get("slave_id", 1))
+        self._modbus_unit = unit
         _framer_str = config.get("modbus_framer", DEFAULT_MODBUS_FRAMER).strip().lower()
         if _framer_str == "rtu":
             self._framer = FramerType.RTU
@@ -282,8 +320,17 @@ class NeoPoolModbusClient:
         )
         self._cached_timers: dict[str, Any] = {}  # Last known timer values
 
-    async def get_client(self) -> AsyncModbusTcpClient:
-        """Get or create a Modbus client with retry logic."""
+    async def get_client(self) -> AsyncModbusTcpClient | ModbusUnit:
+        """Get or create a Modbus client with retry logic.
+
+        When a shared ``ModbusUnit`` was injected, that handle is returned
+        directly: it already owns its connection, so none of the connect,
+        health-check, retry or backoff machinery runs. Callers only read its
+        ``connected`` property and hand it to the ``_io_*`` methods, which
+        route through the handle regardless.
+        """
+        if self._modbus_unit is not None:
+            return self._modbus_unit
         async with self._client_lock:
             # Check if we're in backoff period
             if self._backoff_until and datetime.now(tz=UTC) < self._backoff_until:
@@ -554,7 +601,7 @@ class NeoPoolModbusClient:
 
     async def _io_read(
         self,
-        client: AsyncModbusTcpClient,
+        client: AsyncModbusTcpClient | ModbusUnit,
         address: int,
         count: int,
         *,
@@ -572,8 +619,16 @@ class NeoPoolModbusClient:
 
         ``client`` is the already-connected client the caller holds, so one read
         does not re-enter ``get_client``. Keeping every read behind this one
-        method keeps the call sites transport-agnostic.
+        method keeps the call sites transport-agnostic. When the client borrows
+        a shared ``ModbusUnit`` this reads through that handle instead, which
+        returns the values directly; ``client`` is then unused.
         """
+        if self._modbus_unit is not None:
+            return await self._unit_read(
+                address, count, is_input=is_input, error_prefix=error_prefix
+            )
+        # Not injected: the handle is the owned pymodbus client.
+        client = cast(AsyncModbusTcpClient, client)
         read_func = (
             client.read_input_registers if is_input else client.read_holding_registers
         )
@@ -582,9 +637,38 @@ class NeoPoolModbusClient:
             raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {rr}")
         return list(rr.registers)
 
+    async def _unit_read(
+        self,
+        address: int,
+        count: int,
+        *,
+        is_input: bool,
+        error_prefix: str = "Modbus read error from",
+    ) -> list[int]:
+        """Read through the borrowed ``ModbusUnit`` handle.
+
+        The handle returns the register values directly and raises on failure.
+        A timeout stays a ``TimeoutError`` (the shared handle raises a subclass
+        of it) so the caller maps it to ``NeoPoolTimeoutError`` exactly as for
+        the owned pymodbus path; any other failure becomes ``NeoPoolModbusError``
+        carrying ``error_prefix`` so both paths report the same message.
+        """
+        assert self._modbus_unit is not None
+        reader = (
+            self._modbus_unit.read_input_registers
+            if is_input
+            else self._modbus_unit.read_holding_registers
+        )
+        try:
+            return list(await reader(address, count))
+        except TimeoutError:
+            raise
+        except Exception as e:  # the shared handle raises its own error hierarchy; map anything that is not a timeout to NeoPoolModbusError
+            raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {e}") from e
+
     async def _io_write_registers(
         self,
-        client: AsyncModbusTcpClient,
+        client: AsyncModbusTcpClient | ModbusUnit,
         address: int,
         values: list[int],
         *,
@@ -595,13 +679,40 @@ class NeoPoolModbusClient:
         The single choke point for the write path. ``client`` is the caller's
         already-connected client; a Modbus error reply raises ``NeoPoolModbusError``
         (with ``error_prefix``) so callers cannot merge optimistic state after a
-        rejected write.
+        rejected write. When the client borrows a shared ``ModbusUnit`` this
+        writes through that handle instead; ``client`` is then unused.
         """
+        if self._modbus_unit is not None:
+            await self._unit_write_registers(address, values, error_prefix=error_prefix)
+            return
+        # Not injected: the handle is the owned pymodbus client.
+        client = cast(AsyncModbusTcpClient, client)
         result = await client.write_registers(
             address=address, values=values, device_id=self._unit
         )
         if result.isError():
             raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {result}")
+
+    async def _unit_write_registers(
+        self,
+        address: int,
+        values: list[int],
+        *,
+        error_prefix: str = "Write rejected at",
+    ) -> None:
+        """Write through the borrowed ``ModbusUnit`` handle.
+
+        The handle returns nothing and raises on failure. A timeout stays a
+        ``TimeoutError`` for the caller to map; any other failure becomes
+        ``NeoPoolModbusError`` carrying ``error_prefix``.
+        """
+        assert self._modbus_unit is not None
+        try:
+            await self._modbus_unit.write_registers(address, values)
+        except TimeoutError:
+            raise
+        except Exception as e:  # the shared handle raises its own error hierarchy; map anything that is not a timeout to NeoPoolModbusError
+            raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {e}") from e
 
     async def async_read_register(
         self,
@@ -707,7 +818,7 @@ class NeoPoolModbusClient:
 
     async def _read_register_ranges(
         self,
-        client: AsyncModbusTcpClient,
+        client: AsyncModbusTcpClient | ModbusUnit,
         ranges: list[tuple[int, int]],
         is_input: bool = False,
         label: str = "",
@@ -2302,7 +2413,11 @@ class NeoPoolModbusClient:
             "host": self._host,
             "port": self._port,
             "unit_id": self._unit,
-            "connected": getattr(self._client, "connected", False),
+            "connected": (
+                self._modbus_unit.connected
+                if self._modbus_unit is not None
+                else getattr(self._client, "connected", False)
+            ),
             "total_operations": self._total_operations,
             "successful_operations": self._successful_operations,
             "consecutive_errors": self._consecutive_errors,

@@ -29,7 +29,7 @@ the public surface small:
 
 from __future__ import annotations
 
-from .client import NeoPoolModbusClient
+from .client import ModbusUnit, NeoPoolModbusClient
 from .exceptions import (
     InvalidStateReason,
     NeoPoolConnectionError,
@@ -44,6 +44,7 @@ __version__ = "4.10.0"
 
 __all__ = [
     "InvalidStateReason",
+    "ModbusUnit",
     "NeoPoolConnectionError",
     "NeoPoolError",
     "NeoPoolInvalidStateError",

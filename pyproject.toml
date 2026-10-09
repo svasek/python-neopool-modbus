@@ -146,6 +146,7 @@ exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
+    "^\\s*\\.\\.\\.$",
 ]
 fail_under = 99
 show_missing = true
