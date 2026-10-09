@@ -42,4 +42,4 @@ jobs:
         run: pip install --upgrade codespell
 
       - name: Run CodeSpell
-        run: codespell --toml pyproject.toml
+        run: codespell --toml pyproject.toml --ignore-words-list hass
