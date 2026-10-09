@@ -20,7 +20,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol, overload
+from typing import Any, Protocol, cast, overload
 
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.framer import FramerType
@@ -601,7 +601,7 @@ class NeoPoolModbusClient:
 
     async def _io_read(
         self,
-        client: AsyncModbusTcpClient,
+        client: AsyncModbusTcpClient | ModbusUnit,
         address: int,
         count: int,
         *,
@@ -627,6 +627,8 @@ class NeoPoolModbusClient:
             return await self._unit_read(
                 address, count, is_input=is_input, error_prefix=error_prefix
             )
+        # Not injected: the handle is the owned pymodbus client.
+        client = cast(AsyncModbusTcpClient, client)
         read_func = (
             client.read_input_registers if is_input else client.read_holding_registers
         )
@@ -666,7 +668,7 @@ class NeoPoolModbusClient:
 
     async def _io_write_registers(
         self,
-        client: AsyncModbusTcpClient,
+        client: AsyncModbusTcpClient | ModbusUnit,
         address: int,
         values: list[int],
         *,
@@ -683,6 +685,8 @@ class NeoPoolModbusClient:
         if self._modbus_unit is not None:
             await self._unit_write_registers(address, values, error_prefix=error_prefix)
             return
+        # Not injected: the handle is the owned pymodbus client.
+        client = cast(AsyncModbusTcpClient, client)
         result = await client.write_registers(
             address=address, values=values, device_id=self._unit
         )
@@ -814,7 +818,7 @@ class NeoPoolModbusClient:
 
     async def _read_register_ranges(
         self,
-        client: AsyncModbusTcpClient,
+        client: AsyncModbusTcpClient | ModbusUnit,
         ranges: list[tuple[int, int]],
         is_input: bool = False,
         label: str = "",
