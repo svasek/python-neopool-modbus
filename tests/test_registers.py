@@ -41,6 +41,7 @@ from neopool_modbus.registers import (
     RelayMode,
     SetpointKind,
     TimerRelayMode,
+    framer_to_socket_name,
 )
 
 
@@ -127,3 +128,30 @@ def test_masked_flag_shift_and_mask_align() -> None:
         assert shifted & (shifted + 1) == 0, (
             f"{flag.name}: mask 0x{mask:04X} >> {shift} = 0x{shifted:04X} is not contiguous"
         )
+
+
+def test_framer_to_socket_name_maps_tcp_to_socket() -> None:
+    """The library's "tcp" framer is Modbus TCP, named "socket" on a shared link."""
+    assert framer_to_socket_name("tcp") == "socket"
+
+
+def test_framer_to_socket_name_keeps_rtu() -> None:
+    """RTU-over-TCP keeps the "rtu" framer name on a shared link."""
+    assert framer_to_socket_name("rtu") == "rtu"
+
+
+def test_framer_to_socket_name_accepts_socket_and_ascii() -> None:
+    """Framer names already in shared-connection form pass through."""
+    assert framer_to_socket_name("socket") == "socket"
+    assert framer_to_socket_name("ascii") == "ascii"
+
+
+def test_framer_to_socket_name_is_case_and_space_insensitive() -> None:
+    """Values are normalised like the owned-connection path does."""
+    assert framer_to_socket_name(" TCP ") == "socket"
+    assert framer_to_socket_name("RTU") == "rtu"
+
+
+def test_framer_to_socket_name_unknown_falls_back_to_socket() -> None:
+    """An unknown framer falls back to Modbus TCP, matching the owned path."""
+    assert framer_to_socket_name("bogus") == "socket"

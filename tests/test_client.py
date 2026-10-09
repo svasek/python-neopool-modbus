@@ -121,6 +121,14 @@ def test_framer_tcp_maps_to_socket():
     assert client._framer == FramerType.SOCKET
 
 
+def test_framer_socket_maps_to_socket():
+    """Test that modbus_framer='socket' (the framer name) also maps to SOCKET."""
+    client = neopool_modbus.NeoPoolModbusClient(
+        {"host": "127.0.0.1", "port": 502, "unit_id": 1, "modbus_framer": "socket"}
+    )
+    assert client._framer == FramerType.SOCKET
+
+
 def test_framer_rtu_maps_to_rtu():
     """Test that modbus_framer='rtu' maps to FramerType.RTU."""
     client = neopool_modbus.NeoPoolModbusClient(

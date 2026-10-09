@@ -256,7 +256,9 @@ class NeoPoolModbusClient:
         _framer_str = config.get("modbus_framer", DEFAULT_MODBUS_FRAMER).strip().lower()
         if _framer_str == "rtu":
             self._framer = FramerType.RTU
-        elif _framer_str == "tcp":
+        elif _framer_str in ("tcp", "socket"):
+            # "tcp" is the library's historical name for Modbus TCP; "socket"
+            # is the framer name shared connections use for the same thing.
             self._framer = FramerType.SOCKET
         else:
             _LOGGER.warning(
