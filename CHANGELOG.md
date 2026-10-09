@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.11.0](https://github.com/svasek/python-neopool-modbus/compare/v4.10.0...v4.11.0) (2026-10-09)
+
+
+### ✨ Features
+
+* **client:** ✨ accept an injected ModbusUnit for a shared connection ([#83](https://github.com/svasek/python-neopool-modbus/issues/83)) ([a89201e](https://github.com/svasek/python-neopool-modbus/commit/a89201efebc4c0373e2921df3ac6e265c19ccba9))
+
+
+### ♻️ Refactoring
+
+* **client:** ♻️ route all register I/O through _io_* choke points ([#81](https://github.com/svasek/python-neopool-modbus/issues/81)) ([77e34dc](https://github.com/svasek/python-neopool-modbus/commit/77e34dcc86f0e5575561991fbd8540e76b536ac2))
+
 ## [4.10.0](https://github.com/svasek/python-neopool-modbus/compare/v4.9.0...v4.10.0) (2026-10-02)
 
 
