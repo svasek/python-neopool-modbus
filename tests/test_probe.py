@@ -50,6 +50,14 @@ def test_resolve_framer_tcp():
     assert _resolve_framer(" tcp ") == FramerType.SOCKET
 
 
+def test_resolve_framer_socket():
+    """The shared-connection framer name "socket" is accepted as Modbus TCP."""
+    from pymodbus.framer import FramerType
+
+    assert _resolve_framer("socket") == FramerType.SOCKET
+    assert _resolve_framer(" SOCKET ") == FramerType.SOCKET
+
+
 def test_resolve_framer_rtu():
     from pymodbus.framer import FramerType
 
