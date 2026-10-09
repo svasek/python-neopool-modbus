@@ -709,7 +709,6 @@ class NeoPoolModbusClient:
             raise
         except Exception as e:  # the shared handle raises its own error hierarchy; map anything that is not a timeout to NeoPoolModbusError
             raise NeoPoolModbusError(f"{error_prefix} 0x{address:04X}: {e}") from e
-            raise NeoPoolModbusError(f"Write rejected at 0x{address:04X}: {e}") from e
 
     async def async_read_register(
         self,
