@@ -571,8 +571,8 @@ class NeoPoolModbusClient:
         reply (e.g. a write confirmation read-back).
 
         ``client`` is the already-connected client the caller holds, so one read
-        does not re-enter ``get_client``. The injected-unit path (a later change)
-        branches here, keeping every call site transport-agnostic.
+        does not re-enter ``get_client``. Keeping every read behind this one
+        method keeps the call sites transport-agnostic.
         """
         read_func = (
             client.read_input_registers if is_input else client.read_holding_registers
@@ -595,7 +595,7 @@ class NeoPoolModbusClient:
         The single choke point for the write path. ``client`` is the caller's
         already-connected client; a Modbus error reply raises ``NeoPoolModbusError``
         (with ``error_prefix``) so callers cannot merge optimistic state after a
-        rejected write. The injected-unit path branches here.
+        rejected write.
         """
         result = await client.write_registers(
             address=address, values=values, device_id=self._unit
@@ -1941,10 +1941,11 @@ class NeoPoolModbusClient:
             if not isinstance(value, list):
                 value = [value]
 
+            # A rejected write raises inside _io_write_registers (it never
+            # returns None), so callers cannot merge optimistic state; the
+            # NeoPoolError handler below bumps _failed_writes + closes the
+            # client uniformly.
             await self._io_write_registers(client, address, value)
-            # Raising (not returning None) on a rejected write keeps callers
-            # from merging optimistic state; the NeoPoolError handler below
-            # bumps _failed_writes + closes the client uniformly.
             _LOGGER.debug(
                 "Wrote register(s) at 0x%04X: %s", address, [int(v) for v in value]
             )
