@@ -763,13 +763,6 @@ class NeoPoolModbusClient:
             )
 
         client = await self.get_client()
-        if client is None or not client.connected:
-            self._failed_reads["connection"] = (
-                self._failed_reads.get("connection", 0) + 1
-            )
-            raise NeoPoolConnectionError(
-                f"Modbus client connection failed to {self._host}:{self._port}"
-            )
         # Reuse _read_register_ranges for the timeout / Modbus-error →
         # NeoPool*Error translation, _failed_reads bookkeeping, and the
         # _INTER_REQUEST_DELAY sleep that the rest of the library applies.
@@ -908,13 +901,6 @@ class NeoPoolModbusClient:
         start = time.monotonic()
         try:
             client = await self.get_client()
-            if client is None or not client.connected:  # pragma: no cover
-                self._failed_reads["connection"] = (
-                    self._failed_reads.get("connection", 0) + 1
-                )
-                raise NeoPoolConnectionError(  # noqa: TRY301  # raise inside try so the surrounding NeoPoolError handler bumps diagnostics uniformly
-                    f"Modbus client connection failed to {self._host}:{self._port}"
-                )
 
             """
             Request MEASURE page of registers starting from 0x0100
@@ -2045,10 +2031,6 @@ class NeoPoolModbusClient:
 
         try:
             client = await self.get_client()
-            if client is None or not client.connected:
-                raise NeoPoolConnectionError(  # noqa: TRY301  # raise inside try so the surrounding handler bumps diagnostics + closes client uniformly
-                    f"Modbus client connection failed to {self._host}:{self._port}"
-                )
 
             # Ensure value is always a list, even for a single register
             if not isinstance(value, list):
@@ -2203,13 +2185,6 @@ class NeoPoolModbusClient:
             }
 
         client = await self.get_client()
-        if client is None or not client.connected:
-            self._failed_reads["timers_connection"] = (
-                self._failed_reads.get("timers_connection", 0) + 1
-            )
-            raise NeoPoolConnectionError(
-                f"Modbus client connection failed to {self._host}:{self._port}"
-            )
         for name, addr in TIMER_BLOCKS.items():
             if name not in effective_timers:
                 continue
@@ -2290,14 +2265,6 @@ class NeoPoolModbusClient:
 
             # 1. Read current timer block from Modbus
             client = await self.get_client()
-            if client is None or not client.connected:
-                self._failed_writes[f"0x{addr:04X}"] = (
-                    self._failed_writes.get(f"0x{addr:04X}", 0) + 1
-                )
-                _LOGGER.error(
-                    "Modbus client connection failed to %s:%s", self._host, self._port
-                )
-                return False
             try:
                 current_regs = await self._io_read(client, addr, 15, is_input=False)
             except NeoPoolModbusError as e:
@@ -2342,11 +2309,6 @@ class NeoPoolModbusClient:
             )
 
             # 4. Write full block back to Modbus
-            if client is None or not client.connected:  # pragma: no cover
-                _LOGGER.error(
-                    "Modbus client connection failed to %s:%s", self._host, self._port
-                )
-                return False
             try:
                 await self._io_write_registers(client, addr, regs)
             except NeoPoolModbusError as e:

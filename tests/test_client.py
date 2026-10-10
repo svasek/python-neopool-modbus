@@ -933,16 +933,22 @@ async def test_perform_read_all_timers_exception(config, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_perform_read_all_timers_not_connected(config, monkeypatch):
-    """Test _perform_read_all_timers if client is not connected."""
+    """A failed timer read is logged per block and yields no timers (no raise).
+
+    Each timer block read is best-effort: on failure it is counted, logged, and
+    skipped, so a dead link surfaces as an empty result rather than a raise.
+    """
 
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=NeoPoolConnectionError("connection is not established")
+    )
 
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
 
-    with pytest.raises(NeoPoolConnectionError):
-        await client._perform_read_all_timers()
+    result = await client._perform_read_all_timers()
+    assert result == {}
 
 
 @pytest.mark.asyncio
@@ -1133,17 +1139,18 @@ async def test_perform_write_register_confirm_isError(config, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_perform_write_register_not_connected(config, monkeypatch):
-    """Test _perform_write_register raises NeoPoolConnectionError if client is not connected.
+    """A failed write surfaces as a NeoPool error and bumps _failed_writes once.
 
-    Regression: the inner pre-bump and the outer NeoPoolError handler used
-    to both increment _failed_writes for the same address, double-counting
-    a single failed operation in diagnostics.
+    Regression: a single failed operation must increment _failed_writes for the
+    address exactly once, not double-count.
     """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
+    fake_modbus.write_registers = AsyncMock(
+        side_effect=NeoPoolConnectionError("connection is not established")
+    )
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
-    with pytest.raises(NeoPoolConnectionError):
+    with pytest.raises(neopool_modbus.NeoPoolError):
         await client._perform_write_register(0x0100, 123)
     assert client._failed_writes.get("0x0100") == 1
 
@@ -1462,11 +1469,13 @@ async def test_perform_write_timer_stop_equals_on_disables(config, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_perform_write_timer_not_connected(config, monkeypatch):
-    """Test _perform_write_timer returns False if client is not connected."""
+    """Test _perform_write_timer returns False when the block read is rejected."""
 
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=neopool_modbus.NeoPoolModbusError("read rejected")
+    )
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
 
     result = await client._perform_write_timer("filtration2", {"on": 10})
@@ -3057,21 +3066,28 @@ async def test_async_read_register_overflow_past_16_bit_space(
 
 @pytest.mark.asyncio
 async def test_async_read_register_connection_error_propagates(config, monkeypatch):
-    """If the client isn't connected, NeoPoolConnectionError surfaces and bumps diagnostics."""
+    """A failed read surfaces as a NeoPool error and bumps diagnostics.
+
+    The client no longer pre-checks ``connected``: a dead link shows up when the
+    read itself fails (the shared unit connects lazily on first use), so the
+    error propagates from the read and the per-address counter is bumped.
+    """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=NeoPoolConnectionError("connection is not established")
+    )
     monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
 
-    with pytest.raises(NeoPoolConnectionError):
+    with pytest.raises(neopool_modbus.NeoPoolError):
         await client.async_read_register(0x0500)
-    # Each disconnected read increments the diagnostic counter so users see
+    # Each failed read increments the diagnostic counter so users see
     # connection drops in `_failed_reads`, not just the raised exception.
-    assert client._failed_reads.get("connection") == 1
+    assert client._failed_reads.get("0x0500") == 1
 
-    with pytest.raises(NeoPoolConnectionError):
+    with pytest.raises(neopool_modbus.NeoPoolError):
         await client.async_read_register(0x0500)
-    assert client._failed_reads.get("connection") == 2
+    assert client._failed_reads.get("0x0500") == 2
 
 
 @pytest.mark.asyncio
@@ -5009,6 +5025,23 @@ async def test_injected_unit_read_holding(config):
     assert result == [0x1234]
     unit.read_holding_registers.assert_awaited_once_with(0x0400, 1)
     unit.read_input_registers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_lazy_connect_read_succeeds_when_not_connected(config):
+    """A read must not be blocked while the shared unit is still disconnected.
+
+    Regression: a shared ModbusUnit connects lazily on first use, so it reports
+    connected=False until then. The read must go through (and the handle
+    connects itself) rather than being refused up front.
+    """
+    unit = _fake_unit(connected=False, holding=[0x1234])
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    result = await client.async_read_register(0x0400, count=1)
+
+    assert result == [0x1234]
+    unit.read_holding_registers.assert_awaited_once_with(0x0400, 1)
 
 
 @pytest.mark.asyncio
