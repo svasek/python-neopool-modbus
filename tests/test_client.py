@@ -941,7 +941,6 @@ async def test_perform_read_all_timers_not_connected(config, monkeypatch):
 
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=NeoPoolConnectionError("connection is not established")
     )
@@ -1147,7 +1146,6 @@ async def test_perform_write_register_not_connected(config, monkeypatch):
     """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
     fake_modbus.write_registers = AsyncMock(
         side_effect=NeoPoolConnectionError("connection is not established")
     )
@@ -1475,7 +1473,6 @@ async def test_perform_write_timer_not_connected(config, monkeypatch):
 
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=neopool_modbus.NeoPoolModbusError("read rejected")
     )
@@ -3077,7 +3074,6 @@ async def test_async_read_register_connection_error_propagates(config, monkeypat
     """
     client = neopool_modbus.NeoPoolModbusClient(config)
     fake_modbus = AsyncMock()
-    fake_modbus.connected = False
     fake_modbus.read_holding_registers = AsyncMock(
         side_effect=NeoPoolConnectionError("connection is not established")
     )
@@ -5029,6 +5025,23 @@ async def test_injected_unit_read_holding(config):
     assert result == [0x1234]
     unit.read_holding_registers.assert_awaited_once_with(0x0400, 1)
     unit.read_input_registers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_injected_unit_lazy_connect_read_succeeds_when_not_connected(config):
+    """A read must not be blocked while the shared unit is still disconnected.
+
+    Regression: a shared ModbusUnit connects lazily on first use, so it reports
+    connected=False until then. The read must go through (and the handle
+    connects itself) rather than being refused up front.
+    """
+    unit = _fake_unit(connected=False, holding=[0x1234])
+    client = neopool_modbus.NeoPoolModbusClient(config, unit=unit)
+
+    result = await client.async_read_register(0x0400, count=1)
+
+    assert result == [0x1234]
+    unit.read_holding_registers.assert_awaited_once_with(0x0400, 1)
 
 
 @pytest.mark.asyncio
