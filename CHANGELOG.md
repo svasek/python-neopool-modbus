@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.12.1](https://github.com/svasek/python-neopool-modbus/compare/v4.12.0...v4.12.1) (2026-10-10)
+
+
+### 🐛 Bug Fixes
+
+* **client:** 🐛 do not block a lazily-connecting injected unit on connected ([#86](https://github.com/svasek/python-neopool-modbus/issues/86)) ([f69dde7](https://github.com/svasek/python-neopool-modbus/commit/f69dde74291d2cedc1dfd9f49579f6e9fe152ad0))
+
 ## [4.12.0](https://github.com/svasek/python-neopool-modbus/compare/v4.11.0...v4.12.0) (2026-10-09)
 
 
