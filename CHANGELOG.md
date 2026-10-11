@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.13.0](https://github.com/svasek/python-neopool-modbus/compare/v4.12.1...v4.13.0) (2026-10-11)
+
+
+### ✨ Features
+
+* **probe:** ✨ add unit-based serial probe for shared connections ([#88](https://github.com/svasek/python-neopool-modbus/issues/88)) ([0b27967](https://github.com/svasek/python-neopool-modbus/commit/0b279673051bd3210c84a09a2515b65d03ae988f))
+
 ## [4.12.1](https://github.com/svasek/python-neopool-modbus/compare/v4.12.0...v4.12.1) (2026-10-10)
 
 
