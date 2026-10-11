@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from neopool_modbus import async_probe_serial
+from neopool_modbus import async_probe_serial, async_probe_serial_unit
 from neopool_modbus.exceptions import (
     NeoPoolConnectionError,
     NeoPoolModbusError,
@@ -278,3 +278,62 @@ async def test_async_probe_serial_read_cancelled_propagates():
         pytest.raises(asyncio.CancelledError),
     ):
         await async_probe_serial("192.0.2.10")
+
+
+# ---------------------------------------------------------------------------
+# async_probe_serial_unit (shared-connection probe)
+# ---------------------------------------------------------------------------
+
+
+def _make_unit(read_result=None, read_side_effect=None):
+    """Build a stub ModbusUnit handle returning register values directly."""
+    unit = MagicMock()
+    unit.read_holding_registers = AsyncMock(
+        return_value=read_result, side_effect=read_side_effect
+    )
+    return unit
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_happy_path():
+    """The handle returns register values directly; they decode to a hex serial."""
+    unit = _make_unit(read_result=[0x0001, 0x00AC, 0x00CD, 0x0012, 0x0034, 0x0000])
+    serial = await async_probe_serial_unit(unit)
+    assert serial == "000100AC00CD001200340000"
+    # The unit id is bound to the handle, so no device id is passed per call.
+    unit.read_holding_registers.assert_awaited_once_with(0x0004, 6)
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_empty_serial():
+    """Registers that decode to no usable bytes raise NeoPoolModbusError."""
+    unit = _make_unit(read_result=[])
+    with (
+        patch("neopool_modbus.probe.modbus_regs_to_hex_string", return_value=""),
+        pytest.raises(NeoPoolModbusError),
+    ):
+        await async_probe_serial_unit(unit)
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_timeout():
+    """A timeout from the handle maps to NeoPoolTimeoutError."""
+    unit = _make_unit(read_side_effect=TimeoutError("slow"))
+    with pytest.raises(NeoPoolTimeoutError):
+        await async_probe_serial_unit(unit)
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_other_exception():
+    """Any non-timeout failure from the handle maps to NeoPoolModbusError."""
+    unit = _make_unit(read_side_effect=RuntimeError("boom"))
+    with pytest.raises(NeoPoolModbusError):
+        await async_probe_serial_unit(unit)
+
+
+@pytest.mark.asyncio
+async def test_async_probe_serial_unit_cancelled_propagates():
+    """asyncio.CancelledError from the read must propagate, never be wrapped."""
+    unit = _make_unit(read_side_effect=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await async_probe_serial_unit(unit)

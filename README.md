@@ -101,10 +101,11 @@ data = await client.async_read_all()
 In this mode the client routes every read and write through the handle and
 runs none of its own connect, retry, backoff or health-check machinery; the
 `host`/`port`/`modbus_framer` entries are kept only for diagnostics and log
-messages. Because the protocol only speaks in register reads and writes, the
-transport underneath the handle (TCP, RTU-over-TCP, or a serial line) is
-transparent to this library. Omit `unit` to keep the self-owned pymodbus
-connection described above.
+messages, and `host` may be omitted entirely (a serial link has no host).
+Because the protocol only speaks in register reads and writes, the transport
+underneath the handle (TCP, RTU-over-TCP, or a serial line) is transparent to
+this library. Omit `unit` to keep the self-owned pymodbus connection described
+above (which does require `host`).
 
 To obtain that handle inside Home Assistant, a consumer asks the `modbus`
 integration for a unit on the device's link. The link params need a framer
@@ -158,6 +159,31 @@ The method validates the request before touching the wire and raises
 `MAX_REGISTERS_PER_READ` (31), or ranges that would either cross the
 input/holding namespace boundary or extend past the 16-bit address space.
 
+### Probing a device's serial number
+
+For a quick identity check (e.g. validating connection settings in a Home
+Assistant config flow) without standing up a full client, two one-shot probes
+read the hardware serial number and return it as a 24-character hex string:
+
+```python
+from neopool_modbus import async_probe_serial, async_probe_serial_unit
+
+# Owns a short-lived pymodbus socket, reached by host/port/framer:
+serial = await async_probe_serial("192.168.1.42", port=502, framer="tcp")
+
+# Borrows a shared ModbusUnit handle instead of opening a socket; use this
+# when the device is reached over a serial link with no host, or to share one
+# connection. Home Assistant's modbus integration hands a temporary unit out
+# via async_get_temporary_unit():
+serial = await async_probe_serial_unit(unit)
+```
+
+Both raise `NeoPoolTimeoutError` on a timeout and `NeoPoolModbusError` on any
+other read failure or an unusable serial. `async_probe_serial` additionally
+raises `NeoPoolConnectionError` for a refused connect and `ValueError` for an
+unknown framer; the unit-based probe does neither (it neither connects nor
+chooses a framer).
+
 ## Public API
 
 ```python
@@ -170,6 +196,7 @@ from neopool_modbus import (
     NeoPoolModbusError,
     NeoPoolTimeoutError,
     async_probe_serial,
+    async_probe_serial_unit,
 )
 from neopool_modbus.registers import (
     AUX1_FUNCTION_CODE,

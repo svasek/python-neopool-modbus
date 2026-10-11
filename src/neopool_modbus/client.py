@@ -238,7 +238,7 @@ class NeoPoolModbusClient:
     ) -> None:
         """Initialise the client from a config mapping.
 
-        ``config`` must contain ``host``; ``port`` (default 502),
+        ``config`` may contain ``host``; ``port`` (default 502),
         ``unit_id`` (default 1) and ``modbus_framer`` (default ``tcp``)
         are optional. The legacy ``slave_id`` key is still accepted as a
         fallback when ``unit_id`` is not present.
@@ -246,10 +246,11 @@ class NeoPoolModbusClient:
         When ``unit`` is given, the client borrows that shared Modbus handle
         for all register I/O and does not open or own a connection: the
         ``host``/``port``/``modbus_framer`` entries are then only used for
-        diagnostics and log messages. When ``unit`` is omitted, the client
-        owns a pymodbus connection to ``host``:``port`` as before.
+        diagnostics and log messages, and ``host`` may be absent (a serial
+        link has no host). When ``unit`` is omitted, the client owns a pymodbus
+        connection to ``host``:``port`` as before, so ``host`` is required then.
         """
-        self._host: str = config["host"]
+        self._host: str | None = config.get("host")
         self._port = config.get("port", 502)
         self._unit = config.get("unit_id", config.get("slave_id", 1))
         self._modbus_unit = unit
@@ -355,6 +356,9 @@ class NeoPoolModbusClient:
 
     async def _establish_connection_with_retry(self) -> AsyncModbusTcpClient:
         """Establish new connection with exponential backoff retry."""
+        if self._host is None:
+            # Only an injected unit may omit host, and that path never gets here.
+            raise NeoPoolConnectionError("host is required to own a connection")
         last_error = None
 
         for attempt in range(self._max_connection_retries):
