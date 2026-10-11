@@ -32,6 +32,7 @@ import logging
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.framer import FramerType
 
+from .client import ModbusUnit
 from .decoders import modbus_regs_to_hex_string
 from .exceptions import (
     NeoPoolConnectionError,
@@ -166,4 +167,42 @@ async def async_probe_serial(
             _LOGGER.debug("Probe close raised; ignoring", exc_info=True)
 
 
-__all__ = ["async_probe_serial"]
+async def async_probe_serial_unit(unit: ModbusUnit) -> str:
+    """Read the device's hardware serial number through a borrowed Modbus unit.
+
+    The counterpart to :func:`async_probe_serial` for the shared-connection
+    path: instead of opening its own socket it reads through a ``ModbusUnit``
+    handle (e.g. one Home Assistant hands out from ``async_get_temporary_unit``),
+    whose unit id is already bound and whose lifecycle the caller owns. Reads the
+    6-register MBF_POWER_MODULE_NODEID block (``0x0004``-``0x0009``) and returns it
+    as a 24-character uppercase hex string.
+
+    Args:
+        unit: A connected (or lazily-connecting) shared Modbus unit handle.
+
+    Returns:
+        The 24-character hex serial string.
+
+    Raises:
+        NeoPoolTimeoutError: The read timed out (the handle raises a
+            ``TimeoutError`` subclass).
+        NeoPoolModbusError: The read failed for any other reason, or the
+            registers did not decode into a usable serial string.
+    """
+    try:
+        registers = await unit.read_holding_registers(_SERIAL_REGISTER, _SERIAL_COUNT)
+    except asyncio.CancelledError:
+        raise
+    except TimeoutError as exc:
+        raise NeoPoolTimeoutError(f"Probe read timed out: {exc}") from exc
+    except Exception as exc:  # the shared handle raises its own hierarchy; anything not a timeout is a read failure
+        raise NeoPoolModbusError(f"Probe read failed: {exc}") from exc
+
+    serial = modbus_regs_to_hex_string(list(registers))
+    if not serial:
+        raise NeoPoolModbusError("Probe read returned no usable serial bytes")
+    _LOGGER.debug("Probe read serial %s through shared unit", serial)
+    return serial
+
+
+__all__ = ["async_probe_serial", "async_probe_serial_unit"]

@@ -38,7 +38,7 @@ from .exceptions import (
     NeoPoolModbusError,
     NeoPoolTimeoutError,
 )
-from .probe import async_probe_serial
+from .probe import async_probe_serial, async_probe_serial_unit
 
 __version__ = "4.12.1"
 
@@ -53,4 +53,5 @@ __all__ = [
     "NeoPoolTimeoutError",
     "__version__",
     "async_probe_serial",
+    "async_probe_serial_unit",
 ]

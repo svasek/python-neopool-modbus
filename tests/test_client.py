@@ -15,7 +15,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pymodbus.framer import FramerType
@@ -111,6 +111,25 @@ def test_unit_id_defaults_to_one_when_neither_key_present():
     """Neither ``unit_id`` nor ``slave_id`` set: default to ``1``."""
     client = neopool_modbus.NeoPoolModbusClient({"host": "127.0.0.1", "port": 502})
     assert client._unit == 1
+
+
+def test_host_optional_for_injected_unit():
+    """A serial entry has no host; an injected unit makes host optional."""
+    unit = MagicMock()
+    client = neopool_modbus.NeoPoolModbusClient(
+        {"device": "/dev/ttyUSB0", "unit_id": 1}, unit=unit
+    )
+    assert client._host is None
+    assert client._modbus_unit is unit
+
+
+@pytest.mark.asyncio
+async def test_owned_connection_without_host_raises():
+    """Owning a connection still requires a host; the owned path rejects None."""
+    client = neopool_modbus.NeoPoolModbusClient({"unit_id": 1})
+    assert client._host is None
+    with pytest.raises(neopool_modbus.NeoPoolConnectionError):
+        await client._establish_connection_with_retry()
 
 
 def test_framer_tcp_maps_to_socket():
