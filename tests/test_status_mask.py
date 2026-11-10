@@ -16,6 +16,8 @@ import pytest
 
 from neopool_modbus.registers import (
     MAX_RELAY_GPIO,
+    assigned_relay_numbers,
+    aux_relay_available,
     find_corrupted_gpio_registers,
     is_input_register,
     is_valid_relay_gpio,
@@ -210,6 +212,75 @@ def test_find_corrupted_gpio_registers_reports_all_offenders():
     result = find_corrupted_gpio_registers(data)
     keys = {key for key, _, _ in result}
     assert keys == {"MBF_PAR_FILT_GPIO", "MBF_PAR_HEATING_GPIO"}
+
+
+# --- assigned_relay_numbers tests ---
+
+
+def test_assigned_relay_numbers_empty_data():
+    """No GPIO keys means no relays are assigned."""
+    assert assigned_relay_numbers({}) == set()
+
+
+def test_assigned_relay_numbers_collects_valid_only():
+    """Valid 1-based relays are collected; 0 (unassigned) and out-of-range skipped."""
+    data = {
+        "MBF_PAR_FILT_GPIO": 1,
+        "MBF_PAR_LIGHTING_GPIO": 2,
+        "MBF_PAR_PH_BASE_RELAY_GPIO": 4,
+        "MBF_PAR_RX_RELAY_GPIO": 0,  # unassigned
+        "MBF_PAR_CL_RELAY_GPIO": MAX_RELAY_GPIO + 1,  # corrupt
+    }
+    assert assigned_relay_numbers(data) == {1, 2, 4}
+
+
+def test_assigned_relay_numbers_none_treated_as_unassigned():
+    """A ``None`` value is read as unassigned, not an error."""
+    assert assigned_relay_numbers({"MBF_PAR_FILT_GPIO": None}) == set()
+
+
+# --- aux_relay_available tests ---
+
+
+@pytest.mark.parametrize("aux_number", [1, 2, 3, 4])
+def test_aux_relay_available_when_all_functions_unassigned(aux_number: int) -> None:
+    """Every AUX is free when no function occupies a relay."""
+    data = dict.fromkeys(
+        (
+            "MBF_PAR_PH_ACID_RELAY_GPIO",
+            "MBF_PAR_PH_BASE_RELAY_GPIO",
+            "MBF_PAR_RX_RELAY_GPIO",
+            "MBF_PAR_CL_RELAY_GPIO",
+        ),
+        0,
+    )
+    assert aux_relay_available(aux_number, data) is True
+
+
+@pytest.mark.parametrize(
+    ("occupied_relay", "blocked_aux"),
+    [(4, 1), (5, 2), (6, 3), (7, 4)],
+)
+def test_aux_relay_available_false_when_relay_occupied(
+    occupied_relay: int, blocked_aux: int
+) -> None:
+    """AUXn (relay n+3) is unavailable once a function claims that relay."""
+    data = {"MBF_PAR_PH_BASE_RELAY_GPIO": occupied_relay}
+    assert aux_relay_available(blocked_aux, data) is False
+    # Other AUX relays stay free.
+    for other in {1, 2, 3, 4} - {blocked_aux}:
+        assert aux_relay_available(other, data) is True
+
+
+def test_aux_relay_available_low_relays_do_not_block_aux():
+    """Functions on relays 1-3 never occupy an AUX relay (4-7)."""
+    data = {
+        "MBF_PAR_FILT_GPIO": 1,
+        "MBF_PAR_LIGHTING_GPIO": 2,
+        "MBF_PAR_HEATING_GPIO": 3,
+    }
+    for aux_number in (1, 2, 3, 4):
+        assert aux_relay_available(aux_number, data) is True
 
 
 # --- is_input_register tests ---

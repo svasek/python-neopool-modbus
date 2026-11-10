@@ -372,6 +372,34 @@ def find_corrupted_gpio_registers(
     ]
 
 
+# AUX relays are fixed at physical relays 4-7 (AUX1=relay4 .. AUX4=relay7); the
+# RelayKind value (AUX1=1 .. AUX4=4) plus this offset is the physical relay.
+AUX_RELAY_OFFSET = 3
+
+
+def assigned_relay_numbers(data: Mapping[str, Any]) -> set[int]:
+    """Return the physical relay numbers a built-in function is wired to.
+
+    Collects the valid 1-based relay numbers from every ``GPIO_REGISTERS`` entry.
+    A value of 0 (unassigned) or out of range is skipped.
+    """
+    return {
+        relay
+        for key in GPIO_REGISTERS
+        if is_valid_relay_gpio(relay := data.get(key, 0) or 0)
+    }
+
+
+def aux_relay_available(aux_number: int, data: Mapping[str, Any]) -> bool:
+    """Return whether an AUX relay is free for generic on/off control.
+
+    AUX ``aux_number`` (1-4) maps to physical relay ``aux_number + 3``. The relay
+    cannot be driven directly once the device assigns it to a built-in function
+    (pH dosing, heating, UV, lighting, filtration, filter valve, etc.).
+    """
+    return (aux_number + AUX_RELAY_OFFSET) not in assigned_relay_numbers(data)
+
+
 # Timer blocks 0x0434-0x04E8 are read in groups of 15 registers due to the
 # device's per-request limit.
 TIMER_BLOCKS = {
@@ -532,6 +560,7 @@ __all__ = [
     "AUX4_FUNCTION_CODE",
     "AUX4_FUNCTION_REGISTER",
     "AUX4_TIMER_BLOCK_REGISTER",
+    "AUX_RELAY_OFFSET",
     "BinaryConfigFlag",
     "BitmaskConfigFlag",
     "CELL_BOOST_REGISTER",
@@ -598,6 +627,8 @@ __all__ = [
     "TIMER_BLOCKS",
     "TimerRelayMode",
     "UV_MODE_REGISTER",
+    "assigned_relay_numbers",
+    "aux_relay_available",
     "find_corrupted_gpio_registers",
     "framer_to_socket_name",
     "is_input_register",
