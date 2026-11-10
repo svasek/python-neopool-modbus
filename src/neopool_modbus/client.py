@@ -1203,13 +1203,17 @@ class NeoPoolModbusClient:
             result.update(decode_uv_lamp_state(result.get("MBF_RELAY_STATE"), _uv_gpio))
 
             # Decode named relay states using dynamic GPIO mapping.
-            # Each functional relay (Filtration, Light, pH Acid Pump, Heating) is
+            # Each functional relay (Filtration, Light, pH pumps, Heating) is
             # assigned to a physical relay output via MBF_PAR_*_RELAY_GPIO registers.
+            # The base pump is only wired when the device runs in acid+base or
+            # base-only mode; an unassigned GPIO (0) decodes to None.
             result.update(
                 decode_named_relay_states(
                     result.get("MBF_RELAY_STATE"),
                     {
                         "pH Acid Pump": result.get("MBF_PAR_PH_ACID_RELAY_GPIO", 0)
+                        or 0,
+                        "pH Base Pump": result.get("MBF_PAR_PH_BASE_RELAY_GPIO", 0)
                         or 0,
                         "Filtration Pump": result.get("MBF_PAR_FILT_GPIO", 0) or 0,
                         "Pool Light": result.get("MBF_PAR_LIGHTING_GPIO", 0) or 0,
