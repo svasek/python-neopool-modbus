@@ -262,6 +262,8 @@ from neopool_modbus.registers import (
     STOP_ALL_MODULES_REGISTER,
     TIMER_BLOCKS,
     UV_MODE_REGISTER,
+    assigned_relay_numbers,
+    aux_relay_available,
     find_corrupted_gpio_registers,
     framer_to_socket_name,
     is_input_register,
