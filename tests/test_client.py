@@ -2673,6 +2673,101 @@ async def test_filtration_state_fixup_v8_07_firmware(config, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_perform_read_all_decodes_ph_base_pump(config, monkeypatch):
+    """pH Base Pump relay state is decoded from MBF_PAR_PH_BASE_RELAY_GPIO.
+
+    When the base pump is wired to a relay (acid+base or base-only mode), the
+    read cycle must surface its on/off state the same way it does for the acid
+    pump. When no base relay is assigned the key decodes to None.
+    """
+    client = neopool_modbus.NeoPoolModbusClient(config)
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    # MBF_RELAY_STATE: relay 4 (bit 3) is on, relay 3 (bit 2) is off.
+    reg01 = [0] * 18
+    reg01[14] = 0x0008  # bit 3 set
+
+    # installer block 1 (reg04): acid pump = relay 3 (idx 2), base pump = relay 4 (idx 3).
+    installer_block1 = [0] * 31
+    installer_block1[2] = 3  # MBF_PAR_PH_ACID_RELAY_GPIO = relay 3 (bit 2 -> off)
+    installer_block1[3] = 4  # MBF_PAR_PH_BASE_RELAY_GPIO = relay 4 (bit 3 -> on)
+
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=[
+            DummyResp([1, 3, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            DummyResp([0] * 20),
+            DummyResp([0, 0]),
+            DummyResp([0] * 13),
+            DummyResp([0] * 4),
+            DummyResp(installer_block1),
+            DummyResp([0] * 13),
+            DummyResp([0] * 8),
+            DummyResp([0] * 14),
+            DummyResp([0] * 13),
+        ]
+    )
+    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp(reg01))
+
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client._perform_read_all()
+
+    assert result["pH Acid Pump"] is False
+    assert result["pH Base Pump"] is True
+
+
+@pytest.mark.asyncio
+async def test_perform_read_all_ph_base_pump_unassigned(config, monkeypatch):
+    """pH Base Pump decodes to None when no base relay is assigned (acid-only)."""
+    client = neopool_modbus.NeoPoolModbusClient(config)
+
+    class DummyResp:
+        def __init__(self, regs, is_error=False):
+            self.registers = regs
+            self.isError = lambda: is_error
+
+    fake_modbus = AsyncMock()
+    fake_modbus.connected = True
+
+    reg01 = [0] * 18
+    reg01[14] = 0x0004  # relay 3 (bit 2) on
+
+    installer_block1 = [0] * 31
+    installer_block1[2] = 3  # acid pump = relay 3
+    installer_block1[3] = 0  # no base pump relay assigned
+
+    fake_modbus.read_holding_registers = AsyncMock(
+        side_effect=[
+            DummyResp([1, 3, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            DummyResp([0] * 20),
+            DummyResp([0, 0]),
+            DummyResp([0] * 13),
+            DummyResp([0] * 4),
+            DummyResp(installer_block1),
+            DummyResp([0] * 13),
+            DummyResp([0] * 8),
+            DummyResp([0] * 14),
+            DummyResp([0] * 13),
+        ]
+    )
+    fake_modbus.read_input_registers = AsyncMock(return_value=DummyResp(reg01))
+
+    monkeypatch.setattr(client, "get_client", AsyncMock(return_value=fake_modbus))
+
+    result = await client._perform_read_all()
+
+    assert result["pH Acid Pump"] is True
+    assert result["pH Base Pump"] is None
+
+
+@pytest.mark.asyncio
 async def test_filtration_state_fixup_pump_off_agrees(config, monkeypatch):
     """Test that when MBF_RELAY_STATE and MBF_PAR_FILTRATION_STATE agree (both off), no fixup fires."""
     client = neopool_modbus.NeoPoolModbusClient(config)
